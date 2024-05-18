@@ -20,12 +20,13 @@ limitations under the License.
 #include <opencv2/core.hpp>
 #include <cuda_efficient_features.h>
 
-enum { BAD, HashSIFT };
+enum { BAD,
+       HashSIFT };
 
 cv::cuda::EfficientFeatures::DescriptorType getDescriptorType(int descType, int descBits);
 void convertToGray(const cv::Mat& src, cv::Mat& dst);
 void drawKeypoints(const cv::Mat& src, const std::vector<cv::KeyPoint>& keypoints, cv::Mat& dst, cv::Size maxSize = cv::Size(2048, 1024));
 void drawMatches(const cv::Mat& img1, const std::vector<cv::KeyPoint>& keypoints1, const cv::Mat& img2, const std::vector<cv::KeyPoint>& keypoints2,
-	const std::vector<cv::DMatch>& matches, cv::Mat& dst, cv::Size maxSize = cv::Size(2048, 1024));
+                 const std::vector<cv::DMatch>& matches, cv::Mat& dst, cv::Size maxSize = cv::Size(2048, 1024));
 
 #endif // !__SAMPLE_COMMON_H__

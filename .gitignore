@@ -1,0 +1,19 @@
+# C++
+build/
+*.o
+*.obj
+*.so
+*.exe
+*.out
+*.a
+*.dylib
+*.dll
+*.lib
+*.pdb
+
+# VSCode
+.vscode
+*.vscode
+
+
+

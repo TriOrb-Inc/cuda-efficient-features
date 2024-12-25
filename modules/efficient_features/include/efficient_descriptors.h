@@ -89,6 +89,19 @@ public:
 	CV_WRAP static Ptr<HashSIFT> create(float cropping_scale, int n_bits = SIZE_256_BITS, double sigma = 1.6);
 };
 
+class EORB : public Feature2D
+{
+public:
+	/** @brief Creates the ORB descriptor.
+	@param scale_factor Adjust the sampling window around detected keypoints:
+	- <b> 1.00f </b> should be the scale for ORB keypoints
+	- <b> 6.75f </b> should be the scale for SIFT detected keypoints
+	- <b> 6.25f </b> is default and fits for KAZE, SURF detected keypoints
+	- <b> 5.00f </b> should be the scale for AKAZE, MSD, AGAST, FAST, BRISK keypoints
+	*/
+	CV_WRAP static Ptr<EORB> create(float scale_factor);
+};
+
 } // namespace cv
 
 #endif // !__EFFICIENT_DESCRIPTORS_H__

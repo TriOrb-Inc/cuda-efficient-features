@@ -120,6 +120,19 @@ public:
 	static Ptr<HashSIFT> create(float croppingScale, int nbits = SIZE_256_BITS);
 };
 
+class EORB : public EfficientDescriptorsAsync
+{
+public:
+	/** @brief Creates the ORB descriptor.
+	@param scaleFactor Adjust the sampling window around detected keypoints:
+	- <b> 1.00f </b> should be the scale for ORB keypoints
+	- <b> 6.75f </b> should be the scale for SIFT detected keypoints
+	- <b> 6.25f </b> is default and fits for KAZE, SURF detected keypoints
+	- <b> 5.00f </b> should be the scale for AKAZE, MSD, AGAST, FAST, BRISK keypoints
+	 */
+	static Ptr<EORB> create(float scale_factor);
+};
+
 } // namespace cuda
 } // namespace cv
 

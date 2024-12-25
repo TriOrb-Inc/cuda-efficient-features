@@ -42,6 +42,7 @@ public:
 		BAD_512,
 		HASH_SIFT_256,
 		HASH_SIFT_512,
+		ORB,
 	};
 
 	static Ptr<EfficientFeatures> create(int nfeatures = 5000, float scaleFactor = 1.2f, int nlevels = 8,

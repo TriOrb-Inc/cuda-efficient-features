@@ -26,6 +26,7 @@ limitations under the License.
 //     IEEE Robotics and Automation Letters, 2021.
 
 #include "cuda_efficient_descriptors.h"
+#include "cuda_efficient_features.h"
 
 #include <opencv2/cudaarithm.hpp>
 #include <opencv2/core/cuda_stream_accessor.hpp>
@@ -43,29 +44,86 @@ namespace cv
 	namespace cuda
 	{
 
+		void convertKeypoints(const GpuMat &src, GpuMat &dst, cudaStream_t stream);
+
 		class EORB_Impl : public EORB
 		{
 
 		public:
+			static const int LOCATION_ROW = 0;
+			static const int RESPONSE_ROW = 1;
+			static const int ANGLE_ROW = 2;
+			static const int OCTAVE_ROW = 3;
+			static const int SIZE_ROW = 4;
+			static const int ROWS_COUNT = 5;
+
 			EORB_Impl(float scaleFactor) : scaleFactor_(scaleFactor), paramSize_(256), patchSize_(32, 32)
 			{
 				orb_cpu_ = cv::ORB::create(1);
 				orb_gpu_ = cv::cuda::ORB::create(1);
 			}
 
-			void computeAsync(InputArray _image, InputArray _keypoints, OutputArray _descriptors, Stream &stream) override
-			{
-				getInputMat(_image, image_, stream);
-				getKeypointsMat(_keypoints, keypoints_, stream);
-				getOutputMat(_descriptors, descriptors_, keypoints_.rows, descriptorSize(), descriptorType());
-				orb_gpu_->computeAsync(image_, keypoints_, descriptors_, stream);
-				if (_descriptors.kind() == _InputArray::KindFlag::MAT)
-					descriptors_.download(_descriptors);
-			}
-
 			void compute(InputArray _image, KeyPoints &_keypoints, OutputArray _descriptors) override
 			{
 				orb_cpu_->compute(_image, _keypoints, _descriptors); // CPU only
+			}
+
+			void convert(InputArray src, CV_OUT std::vector<KeyPoint> &dst)
+			{
+				Mat tmp;
+				if (src.kind() == _InputArray::KindFlag::MAT)
+					tmp = src.getMat();
+				else if (src.kind() == _InputArray::KindFlag::CUDA_GPU_MAT)
+					src.getGpuMat().download(tmp);
+
+				const Vec2s *points = tmp.ptr<Vec2s>(LOCATION_ROW);
+				const float *responses = tmp.ptr<float>(RESPONSE_ROW);
+				const float *angles = tmp.ptr<float>(ANGLE_ROW);
+				const int *octaves = tmp.ptr<int>(OCTAVE_ROW);
+				const float *sizes = tmp.ptr<float>(SIZE_ROW);
+
+				const int nkeypoints = tmp.cols;
+				dst.resize(nkeypoints);
+				for (int i = 0; i < nkeypoints; i++)
+				{
+					KeyPoint kpt;
+					kpt.pt = Point2f(points[i][0], points[i][1]);
+					kpt.response = responses[i];
+					kpt.angle = angles[i];
+					kpt.octave = octaves[i];
+					kpt.size = sizes[i];
+					dst[i] = kpt;
+				}
+			}
+
+			void computeAsync(InputArray _image, InputArray _keypoints, OutputArray _descriptors, Stream &stream) override
+			{
+				// 作業中なのでCPU only
+				cv::Mat image, descriptors;
+				std::vector<KeyPoint> keypoints;
+				if (_image.kind() == _InputArray::KindFlag::MAT)
+					image = _image.getMat();
+				else if (_image.kind() == _InputArray::KindFlag::CUDA_GPU_MAT)
+					_image.getGpuMat().download(image);
+				convert(_keypoints, keypoints);
+				orb_cpu_->compute(image, keypoints, descriptors);
+				descriptors_.upload(descriptors, stream);
+#if 0
+				cv::Mat tmp(6, keypoints.size(), CV_32F);
+				for (auto &kpt : keypoints)
+				{
+					tmp.at<float>(0, 0) = kpt.pt.x;
+					tmp.at<float>(1, 0) = kpt.pt.y;
+					tmp.at<float>(2, 0) = kpt.response;
+					tmp.at<float>(3, 0) = kpt.angle;
+					tmp.at<float>(4, 0) = kpt.octave;
+					tmp.at<float>(5, 0) = kpt.size;
+				}
+				keypoints_.upload(tmp, stream);
+				orb_gpu_->computeAsync(_image, keypoints_, descriptors_, stream);
+				if (_descriptors.kind() == _InputArray::KindFlag::MAT)
+					descriptors_.download(_descriptors);
+#endif
 			}
 
 			int descriptorSize() const override { return 32; }

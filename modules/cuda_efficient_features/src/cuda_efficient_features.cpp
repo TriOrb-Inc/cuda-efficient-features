@@ -1,4 +1,10 @@
 /*
+Copyright 2024 TriOrb Inc.
+
+The major design pattern of this plugin was abstracted
+from Fixstars Corporation, which is subject to the same license.
+Here is the original copyright notice:
+
 Copyright 2023 Fixstars Corporation
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -13,6 +19,7 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 */
+#include <iostream>
 
 #include "cuda_efficient_features.h"
 
@@ -60,6 +67,9 @@ static Ptr<EfficientDescriptorsAsync> createDescriber(EfficientFeatures::Descrip
 		break;
 	case EfficientFeatures::HASH_SIFT_512:
 		return cuda::HashSIFT::create(1, cuda::HashSIFT::SIZE_512_BITS);
+		break;
+	case EfficientFeatures::ORB:
+		return cuda::EORB::create(1);
 		break;
 	default:
 		return nullptr;
@@ -294,7 +304,7 @@ public:
 		{
 			GpuMat& keypoints = kptsPyr_[s];
 			const int npoints = keypoints.cols;
-			if (npoints == 0)
+			if (npoints <= 0)
 				continue;
 
 			const Range dstRange(offset, offset + npoints);

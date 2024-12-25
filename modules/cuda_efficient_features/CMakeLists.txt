@@ -8,7 +8,7 @@ set(INTERNAL_INCLUDE_DIR ${INTERFACE_INCLUDE_DIR})
 project(${PROJECT_NAME} LANGUAGES CXX CUDA)
 
 # dependent packages
-find_package(OpenCV REQUIRED core features2d cudev cudafilters cudaimgproc cudawarping)
+find_package(OpenCV REQUIRED core features2d cudev cudafilters cudaimgproc cudawarping cudafeatures2d)
 find_package(CUDAToolkit REQUIRED)
 
 # target configuration

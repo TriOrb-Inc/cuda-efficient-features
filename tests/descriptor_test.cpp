@@ -16,6 +16,41 @@ class DescriptorTest : public ::testing::TestWithParam<Parameters> {};
 INSTANTIATE_TEST_CASE_P(TestWithParams, DescriptorTest,
 	::testing::Combine(::testing::Values(256, 512), ::testing::Range(0, 11)));
 
+TEST_P(DescriptorTest, ORB)
+{
+	const auto param = GetParam();
+	const int descBits = std::get<0>(param);
+	const int imageIdx = std::get<1>(param);
+
+	const auto filename = cv::format("%s/images/100_71%02d.JPG", TEST_DATA_DIR, imageIdx);
+	// const int nbits = descBits == cv::EORB::SIZE_BITS;
+
+	cv::cuda::EfficientFeatures::DescriptorType descriptor_type = cv::cuda::EfficientFeatures::DescriptorType::ORB;
+	auto detector = cv::cuda::EfficientFeatures::create(100000);
+	auto extractorCPU = cv::ORB::create(1);
+	auto extractorGPU = cv::cuda::EORB::create(1);
+	auto feature_extractor_ = cv::cuda::EfficientFeatures::create(100000, 1.0f, 8, 0, 20, 15, descriptor_type);
+
+	cv::Mat image = cv::imread(filename, cv::IMREAD_GRAYSCALE);
+	std::vector<cv::KeyPoint> keypoints;
+	cv::Mat descriptorsCPU, descriptorsGPU;
+
+	detector->detect(image, keypoints);
+	extractorCPU->compute(image, keypoints, descriptorsCPU);
+	extractorGPU->compute(image, keypoints, descriptorsGPU);
+
+	cv::Mat diff;
+	cv::absdiff(descriptorsCPU, descriptorsGPU, diff);
+	const int errors = cv::countNonZero(diff);
+	const int maxErrors = cvFloor(2e-5 * descriptorsCPU.size().area());
+
+	cv::cuda::GpuMat imageGPU, maskGPU, keypointsGPU, descriptorsGPU2;
+	imageGPU.upload(image);
+	feature_extractor_->detectAndComputeAsync(imageGPU, maskGPU, keypointsGPU, descriptorsGPU2, false, cv::cuda::Stream::Null());
+
+	EXPECT_LE(errors, maxErrors);
+}
+
 TEST_P(DescriptorTest, BAD)
 {
 	const auto param = GetParam();

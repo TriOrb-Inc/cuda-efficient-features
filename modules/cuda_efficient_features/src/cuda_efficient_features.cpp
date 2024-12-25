@@ -308,7 +308,6 @@ public:
 				continue;
 
 			const Range dstRange(offset, offset + npoints);
-
 			if (needDescriptors)
 			{
 				GpuMat descriptors = descriptors_.rowRange(dstRange);

@@ -8,4 +8,5 @@ cd build
 cmake -DBUILD_TESTS=ON ../ &&\
 make &&\
 ./tests/tests
+#./tests/tests
 #gdb -ex "set print thread-events off" -ex run --args ./tests/tests

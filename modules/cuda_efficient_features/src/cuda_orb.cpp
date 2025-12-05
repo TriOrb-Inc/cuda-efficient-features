@@ -30,6 +30,7 @@ limitations under the License.
 
 #include <opencv2/cudaarithm.hpp>
 #include <opencv2/cudaimgproc.hpp>
+#include <opencv2/cudawarping.hpp>
 #include <opencv2/core/cuda_stream_accessor.hpp>
 
 #include <vector>
@@ -42,37 +43,23 @@ namespace cv
 	namespace cuda
 	{
 
-                class EORB_Impl : public EORB
+                namespace
                 {
+                        static constexpr int PARAM_SIZE = 256;
+                        static constexpr Size PATCH_SIZE = Size(31, 31);
+                        static constexpr int HALF_PATCH = PATCH_SIZE.width / 2;
 
-                public:
-                        static const int LOCATION_ROW = 0;
-                        static const int RESPONSE_ROW = 1;
-                        static const int ANGLE_ROW = 2;
-                        static const int OCTAVE_ROW = 3;
-                        static const int SIZE_ROW = 4;
-
-                        explicit EORB_Impl(float scaleFactor) : scaleFactor_(scaleFactor) {}
-
-                        void compute(InputArray _image, KeyPoints &_keypoints, OutputArray _descriptors) override
+                        struct ORBBuffers
                         {
-                                const std::variant<_InputArray, KeyPoints> keypoints = _keypoints;
-                                computeImpl(_image, keypoints, _descriptors, Stream::Null());
-                        }
+                                GpuMat image;
+                                GpuMat integral;
+                                GpuMat keypoints;
+                                GpuMat descriptors;
+                        };
 
-                        void computeAsync(InputArray _image, InputArray _keypoints, OutputArray _descriptors, Stream &stream) override
-                        {
-                                const std::variant<_InputArray, KeyPoints> keypoints = _keypoints;
-                                computeImpl(_image, keypoints, _descriptors, stream);
-                        }
-
-                        int descriptorSize() const override { return descriptorSize_; }
-                        int descriptorType() const override { return CV_8U; }
-                        int defaultNorm() const override { return NORM_HAMMING; }
-
-                private:
-                        void computeImpl(InputArray _image, const std::variant<_InputArray, KeyPoints> &_keypoints,
-                                                         OutputArray _descriptors, Stream &stream)
+                        template <bool WrapHorizontal>
+                        void computeDescriptors(InputArray _image, const std::variant<_InputArray, KeyPoints> &_keypoints,
+                                OutputArray _descriptors, Stream &stream, float scaleFactor, ORBBuffers &buffers)
                         {
                                 if (_image.empty())
                                         return;
@@ -85,33 +72,98 @@ namespace cv
 
                                 CV_Assert(_image.type() == CV_8U);
 
-                                getInputMat(_image, image_, stream);
-                                gpu::calcIntegralImage(image_, integral_, stream);
+                                getInputMat(_image, buffers.image, stream);
 
-                                getKeypointsMat(_keypoints, keypoints_, stream);
-                                getOutputMat(_descriptors, descriptors_, keypoints_.rows, descriptorSize(), descriptorType());
+                                if constexpr (WrapHorizontal)
+                                {
+                                        GpuMat horizontalWrapped;
+                                        cv::cuda::copyMakeBorder(buffers.image, horizontalWrapped, 0, 0, HALF_PATCH, HALF_PATCH,
+                                                BORDER_WRAP, Scalar(), stream);
 
-                                gpu::computeORB(integral_, keypoints_, descriptors_, scaleFactor_, PARAM_SIZE, PATCH_SIZE,
-                                                                StreamAccessor::getStream(stream));
+                                        cv::cuda::copyMakeBorder(horizontalWrapped, buffers.image, HALF_PATCH, HALF_PATCH, 0, 0,
+                                                BORDER_REFLECT_101, Scalar(), stream);
+                                }
+
+                                gpu::calcIntegralImage(buffers.image, buffers.integral, stream);
+
+                                getKeypointsMat(_keypoints, buffers.keypoints, stream);
+
+                                if constexpr (WrapHorizontal)
+                                {
+                                        cv::cuda::add(buffers.keypoints, Scalar(HALF_PATCH, HALF_PATCH, 0, 0), buffers.keypoints,
+                                                noArray(), -1, stream);
+                                }
+
+                                getOutputMat(_descriptors, buffers.descriptors, buffers.keypoints.rows, PARAM_SIZE / 8, CV_8U);
+
+                                gpu::computeORB(buffers.integral, buffers.keypoints, buffers.descriptors, scaleFactor, PARAM_SIZE,
+                                        PATCH_SIZE, WrapHorizontal, StreamAccessor::getStream(stream));
 
                                 if (_descriptors.kind() == _InputArray::KindFlag::MAT)
-                                        descriptors_.download(_descriptors, stream);
+                                        buffers.descriptors.download(_descriptors, stream);
+                        }
+                } // namespace
+
+                class EORB_Impl : public EORB
+                {
+                public:
+                        explicit EORB_Impl(float scaleFactor) : scaleFactor_(scaleFactor) {}
+
+                        void compute(InputArray _image, KeyPoints &_keypoints, OutputArray _descriptors) override
+                        {
+                                const std::variant<_InputArray, KeyPoints> keypoints = _keypoints;
+                                computeDescriptors<false>(_image, keypoints, _descriptors, Stream::Null(), scaleFactor_, buffers_);
                         }
 
-                        static constexpr int PARAM_SIZE = 256;
-                        static constexpr Size PATCH_SIZE = Size(31, 31);
-                        float scaleFactor_;
-                        int descriptorSize_ = 32;
+                        void computeAsync(InputArray _image, InputArray _keypoints, OutputArray _descriptors, Stream &stream) override
+                        {
+                                const std::variant<_InputArray, KeyPoints> keypoints = _keypoints;
+                                computeDescriptors<false>(_image, keypoints, _descriptors, stream, scaleFactor_, buffers_);
+                        }
 
-                        GpuMat image_;
-                        GpuMat integral_;
-                        GpuMat keypoints_;
-                        GpuMat descriptors_;
+                        int descriptorSize() const override { return PARAM_SIZE / 8; }
+                        int descriptorType() const override { return CV_8U; }
+                        int defaultNorm() const override { return NORM_HAMMING; }
+
+                private:
+                        float scaleFactor_;
+                        ORBBuffers buffers_;
+                };
+
+                class SphericalORB_Impl : public SphericalORB
+                {
+                public:
+                        explicit SphericalORB_Impl(float scaleFactor) : scaleFactor_(scaleFactor) {}
+
+                        void compute(InputArray _image, KeyPoints &_keypoints, OutputArray _descriptors) override
+                        {
+                                const std::variant<_InputArray, KeyPoints> keypoints = _keypoints;
+                                computeDescriptors<true>(_image, keypoints, _descriptors, Stream::Null(), scaleFactor_, buffers_);
+                        }
+
+                        void computeAsync(InputArray _image, InputArray _keypoints, OutputArray _descriptors, Stream &stream) override
+                        {
+                                const std::variant<_InputArray, KeyPoints> keypoints = _keypoints;
+                                computeDescriptors<true>(_image, keypoints, _descriptors, stream, scaleFactor_, buffers_);
+                        }
+
+                        int descriptorSize() const override { return PARAM_SIZE / 8; }
+                        int descriptorType() const override { return CV_8U; }
+                        int defaultNorm() const override { return NORM_HAMMING; }
+
+                private:
+                        float scaleFactor_;
+                        ORBBuffers buffers_;
                 };
 
                 Ptr<EORB> EORB::create(float scaleFactor)
                 {
                         return makePtr<EORB_Impl>(scaleFactor);
+                }
+
+                Ptr<SphericalORB> SphericalORB::create(float scaleFactor)
+                {
+                        return makePtr<SphericalORB_Impl>(scaleFactor);
                 }
 
         } // namespace cuda

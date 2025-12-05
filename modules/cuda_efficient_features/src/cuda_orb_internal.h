@@ -34,8 +34,9 @@ namespace cv
 	{
 		namespace gpu
 		{
-			void computeORB(const GpuMat &integral, const GpuMat &keypoints, GpuMat &descriptors,
-							float scaleFactor, int paramSize, Size patchSize, cudaStream_t stream);
+                        void computeORB(const GpuMat &integral, const GpuMat &keypoints, GpuMat &descriptors,
+                                                        float scaleFactor, int paramSize, Size patchSize, bool wrapHorizontal,
+                                                        cudaStream_t stream);
 
 			void calcIntegralImage(const GpuMat &src, GpuMat &dst, Stream &stream);
 

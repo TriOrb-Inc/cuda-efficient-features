@@ -123,14 +123,27 @@ public:
 class EORB : public EfficientDescriptorsAsync
 {
 public:
-	/** @brief Creates the ORB descriptor.
+        /** @brief Creates the ORB descriptor.
 	@param scaleFactor Adjust the sampling window around detected keypoints:
 	- <b> 1.00f </b> should be the scale for ORB keypoints
 	- <b> 6.75f </b> should be the scale for SIFT detected keypoints
 	- <b> 6.25f </b> is default and fits for KAZE, SURF detected keypoints
 	- <b> 5.00f </b> should be the scale for AKAZE, MSD, AGAST, FAST, BRISK keypoints
 	 */
-	static Ptr<EORB> create(float scale_factor);
+        static Ptr<EORB> create(float scale_factor);
+};
+
+class SphericalORB : public EfficientDescriptorsAsync
+{
+public:
+        /** @brief Creates the Spherical ORB descriptor with horizontal wrapping.
+        @param scaleFactor Adjust the sampling window around detected keypoints:
+        - <b> 1.00f </b> should be the scale for ORB keypoints
+        - <b> 6.75f </b> should be the scale for SIFT detected keypoints
+        - <b> 6.25f </b> is default and fits for KAZE, SURF detected keypoints
+        - <b> 5.00f </b> should be the scale for AKAZE, MSD, AGAST, FAST, BRISK keypoints
+         */
+        static Ptr<SphericalORB> create(float scale_factor);
 };
 
 } // namespace cuda

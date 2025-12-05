@@ -22,7 +22,8 @@ limitations under the License.
 
 enum { BAD,
        HashSIFT,
-       ORB };
+       ORB,
+       SphericalORB };
 
 cv::cuda::EfficientFeatures::DescriptorType getDescriptorType(int descType, int descBits);
 void convertToGray(const cv::Mat& src, cv::Mat& dst);

@@ -41,9 +41,18 @@ namespace gpu
 
 static constexpr float CV_DEGREES_TO_RADS = 0.017453292519943295f;
 
-static __device__ inline float getPixel(const int *integral, int integralStep, int width, int height, int x, int y)
+static __device__ inline float getPixel(const int *integral, int integralStep, int width, int height, int x, int y, bool wrapHorizontal)
 {
-        x = max(0, min(x, width - 1));
+        if (wrapHorizontal)
+        {
+                const int mod = width;
+                x = ((x % mod) + mod) % mod;
+        }
+        else
+        {
+                x = max(0, min(x, width - 1));
+        }
+
         y = max(0, min(y, height - 1));
 
         const int idx = (y + 1) * integralStep + (x + 1);
@@ -54,18 +63,28 @@ static __device__ inline float getPixel(const int *integral, int integralStep, i
         return static_cast<float>(integral[idx] - integral[idxL] - integral[idxT] + integral[idxTL]);
 }
 
-static __device__ inline float sampleBilinear(const int *integral, int integralStep, int width, int height, float x, float y)
+static __device__ inline float sampleBilinear(const int *integral, int integralStep, int width, int height, float x, float y, bool wrapHorizontal)
 {
+        if (wrapHorizontal)
+        {
+                const float mod = static_cast<float>(width);
+                x = fmodf(x, mod);
+                if (x < 0)
+                        x += mod;
+        }
+
         const int x0 = static_cast<int>(floorf(x));
         const int y0 = static_cast<int>(floorf(y));
 
         const float dx = x - x0;
         const float dy = y - y0;
 
-        const float i00 = getPixel(integral, integralStep, width, height, x0, y0);
-        const float i10 = getPixel(integral, integralStep, width, height, x0 + 1, y0);
-        const float i01 = getPixel(integral, integralStep, width, height, x0, y0 + 1);
-        const float i11 = getPixel(integral, integralStep, width, height, x0 + 1, y0 + 1);
+        const int x1 = wrapHorizontal ? ((x0 + 1) % width) : (x0 + 1);
+
+        const float i00 = getPixel(integral, integralStep, width, height, x0, y0, wrapHorizontal);
+        const float i10 = getPixel(integral, integralStep, width, height, x1, y0, wrapHorizontal);
+        const float i01 = getPixel(integral, integralStep, width, height, x0, y0 + 1, wrapHorizontal);
+        const float i11 = getPixel(integral, integralStep, width, height, x1, y0 + 1, wrapHorizontal);
 
         const float i0 = i00 + dx * (i10 - i00);
         const float i1 = i01 + dx * (i11 - i01);
@@ -85,7 +104,8 @@ static __device__ inline void generatePattern(int idx, float halfPatch, float &x
 }
 
 __global__ void computeORBKernel(const int *integral, int integralStep, int width, int height, const float4 *keypoints,
-        int nkeypoints, unsigned char *descriptors, int descriptorStep, float scaleFactor, int patternSize, int patchSize)
+        int nkeypoints, unsigned char *descriptors, int descriptorStep, float scaleFactor, int patternSize, int patchSize,
+        bool wrapHorizontal)
 {
         const int idx = static_cast<int>(blockIdx.x * blockDim.x + threadIdx.x);
         if (idx >= nkeypoints)
@@ -114,8 +134,8 @@ __global__ void computeORBKernel(const int *integral, int integralStep, int widt
                         const float rx2 = kp.x + scale * (cs * px2 - sn * py2);
                         const float ry2 = kp.y + scale * (sn * px2 + cs * py2);
 
-                        const float v1 = sampleBilinear(integral, integralStep, width, height, rx1, ry1);
-                        const float v2 = sampleBilinear(integral, integralStep, width, height, rx2, ry2);
+                        const float v1 = sampleBilinear(integral, integralStep, width, height, rx1, ry1, wrapHorizontal);
+                        const float v2 = sampleBilinear(integral, integralStep, width, height, rx2, ry2, wrapHorizontal);
 
                         byte |= static_cast<unsigned char>((v1 < v2) ? (1u << bit) : 0u);
                 }
@@ -124,7 +144,7 @@ __global__ void computeORBKernel(const int *integral, int integralStep, int widt
 }
 
 void computeORB(const GpuMat &integral, const GpuMat &keypoints, GpuMat &descriptors, float scaleFactor, int paramSize,
-        Size patchSize, cudaStream_t stream)
+        Size patchSize, bool wrapHorizontal, cudaStream_t stream)
 {
         const int descriptorSize = (paramSize + 7) / 8;
         CV_Assert(descriptors.type() == CV_8U && descriptors.cols == descriptorSize);
@@ -136,7 +156,7 @@ void computeORB(const GpuMat &integral, const GpuMat &keypoints, GpuMat &descrip
 
         computeORBKernel<<<grid, block, 0, stream>>>(integral.ptr<int>(), static_cast<int>(integral.step / sizeof(int)),
                 integral.cols - 1, integral.rows - 1, keypoints.ptr<float4>(), keypoints.rows, descriptors.ptr<unsigned char>(),
-                static_cast<int>(descriptors.step), scaleFactor, paramSize, patchSize.width);
+                static_cast<int>(descriptors.step), scaleFactor, paramSize, patchSize.width, wrapHorizontal);
 }
 
 void calcIntegralImage(const GpuMat &src, GpuMat &dst, Stream &stream)

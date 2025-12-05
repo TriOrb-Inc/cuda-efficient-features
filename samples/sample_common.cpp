@@ -32,6 +32,9 @@ cv::cuda::EfficientFeatures::DescriptorType getDescriptorType(int descType, int 
         if (descType == ORB)
                 return EfficientFeatures::ORB;
 
+        if (descType == SphericalORB)
+                return EfficientFeatures::SPHERICAL_ORB;
+
         return EfficientFeatures::HASH_SIFT_256;
 }
 

@@ -30,7 +30,7 @@ static std::string keys =
 "{ fast-threshold  |     20 | FAST threshold.                                                    }"
 "{ num-levels      |      8 | number of pyramid levels.                                          }"
 "{ nonmax-radius   |     15 | radius of non-maximum suppression.                                 }"
-"{ descriptor-type |      0 | descriptor type(0:BAD 1:HashSIFT 2:ORB).                            }"
+"{ descriptor-type |      0 | descriptor type(0:BAD 1:HashSIFT 2:ORB 3:SphericalORB).               }"
 "{ descriptor-bits |    256 | descriptor bits(256 or 512).                                       }"
 "{ benchmark-type  |      0 | benchmark type(0:detect-and-compute 1:detect-only 2:compute-only). }"
 "{ num-iterations  |    100 | number of iterations for benchmark .                               }"
@@ -67,7 +67,7 @@ int main(int argc, char* argv[])
 	const int fastThreshold = parser.get<int>("fast-threshold");
 	const int nonmaxRadius = parser.get<int>("nonmax-radius");
 	const int descType = parser.get<int>("descriptor-type");
-	const int descBits = parser.get<int>("descriptor-bits");
+        const int descBits = normalizeDescriptorBits(descType, parser.get<int>("descriptor-bits"));
 	const int benchType = parser.get<int>("benchmark-type");
 	const int niterations = parser.get<int>("num-iterations");
 
@@ -85,7 +85,7 @@ int main(int argc, char* argv[])
 		std::exit(EXIT_FAILURE);
 	}
 
-    const char* descStr[] = { "BAD", "HashSIFT", "ORB" };
+    const char* descStr[] = { "BAD", "HashSIFT", "ORB", "SphericalORB" };
 	const char* benchStr[] = { "detect-and-compute", "detect-only", "compute-only" };
 
 	std::cout << "=== configulations ===" << std::endl;

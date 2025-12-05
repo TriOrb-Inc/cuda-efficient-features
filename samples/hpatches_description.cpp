@@ -31,7 +31,7 @@ limitations under the License.
 static std::string keys =
 "{ @hpatchs-dir     |   <none> | path to hpatches-release.                   }"
 "{ result-dir       | ./result | path to result.                             }"
-"{ descriptor-type  |        0 | descriptor type(0:BAD 1:HashSIFT 2:ORB).     }"
+"{ descriptor-type  |        0 | descriptor type(0:BAD 1:HashSIFT 2:ORB 3:SphericalORB). }"
 "{ descriptor-bits  |      256 | descriptor bits(256 or 512).                }"
 "{ compute-angle    |          | compute angles of keypoints.                }"
 "{ help  h          |          | print help message.                         }";
@@ -173,7 +173,7 @@ int main(int argc, char* argv[])
 	const auto hpatchesDir = parser.get<std::string>("@hpatchs-dir");
 	const auto resultDir = parser.get<std::string>("result-dir");
 	const int descType = parser.get<int>("descriptor-type");
-	const int descBits = parser.get<int>("descriptor-bits");
+    const int descBits = normalizeDescriptorBits(descType, parser.get<int>("descriptor-bits"));
 	const bool computeAngle = parser.has("compute-angle");
 
 	if (!parser.check())
@@ -183,7 +183,7 @@ int main(int argc, char* argv[])
 		std::exit(EXIT_FAILURE);
 	}
 
-    const char* descStr[] = { "BAD", "HashSIFT", "ORB" };
+    const char* descStr[] = { "BAD", "HashSIFT", "ORB", "SphericalORB" };
 
 	std::cout << "=== configulations ===" << std::endl;
 	std::cout << "HPatchs directory : " << hpatchesDir << std::endl;

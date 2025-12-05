@@ -50,7 +50,7 @@ int main(int argc, char* argv[])
 	const int fastThreshold = parser.get<int>("fast-threshold");
 	const int nonmaxRadius = parser.get<int>("nonmax-radius");
 	const int descType = parser.get<int>("descriptor-type");
-	const int descBits = parser.get<int>("descriptor-bits");
+        const int descBits = normalizeDescriptorBits(descType, parser.get<int>("descriptor-bits"));
 
 	if (!parser.check())
 	{

@@ -173,7 +173,7 @@ int main(int argc, char* argv[])
 	const auto hpatchesDir = parser.get<std::string>("@hpatchs-dir");
 	const auto resultDir = parser.get<std::string>("result-dir");
 	const int descType = parser.get<int>("descriptor-type");
-	const int descBits = parser.get<int>("descriptor-bits");
+    const int descBits = normalizeDescriptorBits(descType, parser.get<int>("descriptor-bits"));
 	const bool computeAngle = parser.has("compute-angle");
 
 	if (!parser.check())

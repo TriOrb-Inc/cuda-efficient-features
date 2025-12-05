@@ -21,7 +21,8 @@ limitations under the License.
 #include <cuda_efficient_features.h>
 
 enum { BAD,
-       HashSIFT };
+       HashSIFT,
+       ORB };
 
 cv::cuda::EfficientFeatures::DescriptorType getDescriptorType(int descType, int descBits);
 void convertToGray(const cv::Mat& src, cv::Mat& dst);

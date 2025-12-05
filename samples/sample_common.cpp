@@ -23,13 +23,16 @@ cv::cuda::EfficientFeatures::DescriptorType getDescriptorType(int descType, int 
 {
 	using namespace cv::cuda;
 
-	if (descType == BAD)
-		return descBits == 256 ? EfficientFeatures::BAD_256 : EfficientFeatures::BAD_512;
+        if (descType == BAD)
+                return descBits == 256 ? EfficientFeatures::BAD_256 : EfficientFeatures::BAD_512;
 
-	if (descType == HashSIFT)
-		return descBits == 256 ? EfficientFeatures::HASH_SIFT_256 : EfficientFeatures::HASH_SIFT_512;
+        if (descType == HashSIFT)
+                return descBits == 256 ? EfficientFeatures::HASH_SIFT_256 : EfficientFeatures::HASH_SIFT_512;
 
-	return EfficientFeatures::HASH_SIFT_256;
+        if (descType == ORB)
+                return EfficientFeatures::ORB;
+
+        return EfficientFeatures::HASH_SIFT_256;
 }
 
 void convertToGray(const cv::Mat& src, cv::Mat& dst)

@@ -201,11 +201,6 @@ void normalizeSphericalKeypoints(GpuMat &keypoints, Size imageSize, const Spheri
                 imageSize.height, lensParams);
 }
 
-void calcIntegralImage(const GpuMat &src, GpuMat &dst, Stream &stream)
-{
-        cv::cuda::integral(src, dst, stream);
-}
-
 } // namespace gpu
 } // namespace cuda
 } // namespace cv

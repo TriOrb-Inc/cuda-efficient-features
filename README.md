@@ -118,72 +118,91 @@ Use the `--help` or `-h` option for detailed information.
 
 ### ORB / Spherical ORB の使用例
 #### ORB (CUDA 実装)
-`cuda_efficient_features::EORB` を用いることで、ORB 記述子を GPU 上で生成できます。キーポイントの検出と記述子の計算は `cv::cuda::GpuMat` を直接扱う非同期 API にも対応しています。
+`cv::cuda::EfficientFeatures` でキーポイント検出を行い、`cv::cuda::EORB` で ORB 記述子を生成します。`EORB` は記述子計算専用のクラスで、`compute` / `computeAsync` を提供します。
 
 ```cpp
 #include <cuda_efficient_features.h>
+#include <cuda_efficient_descriptors.h>
 
-// CUDA ストリームを利用する場合は cv::cuda::Stream を用意する
-cv::cuda::Stream stream;
+// 1. GPU 上でキーポイント検出（ORB 用スケール: 1.0f）
+auto detector = cv::cuda::EfficientFeatures::create(
+        /*nfeatures=*/5000, /*scaleFactor=*/1.2f, /*nlevels=*/8,
+        /*firstLevel=*/0, /*fastThreshold=*/20, /*nonmaxRadius=*/15,
+        cv::cuda::EfficientFeatures::ORB);
 
-// ORB 記述子抽出器を作成（デフォルトは 256bit）
-auto orb = cuda_efficient_features::EORB::create(/*descriptorSizeBytes=*/32);
-
-// 画像は GPU メモリ上に保持
-cv::cuda::GpuMat image_gpu = cv::cuda::GpuMat(image_cpu);
+cv::cuda::GpuMat image_gpu(image_cpu);
 std::vector<cv::KeyPoint> keypoints;
+detector->detect(image_gpu, keypoints);
+
+// 2. ORB 記述子を GPU 上で計算（デフォルト 256bit）
+auto orb = cv::cuda::EORB::create(/*scaleFactor=*/1.0f);
 cv::cuda::GpuMat descriptors_gpu;
 
-// キーポイント検出と記述子計算（同期版）
-orb->detectAndCompute(image_gpu, cv::cuda::GpuMat(), keypoints, descriptors_gpu, false);
+// 同期版
+orb->compute(image_gpu, keypoints, descriptors_gpu);
 
 // 非同期版（ストリームを指定）
-orb->detectAndComputeAsync(image_gpu, cv::cuda::GpuMat(), keypoints, descriptors_gpu, false, stream);
+cv::cuda::Stream stream;
+orb->computeAsync(image_gpu, keypoints, descriptors_gpu, stream);
 stream.waitForCompletion();
 ```
 
 #### Spherical ORB (CUDA 実装)
-全方位画像など水平方向がループする画像に対して、レンズパラメータ（`fx, fy, cx, cy, k1, k2, k3, k4`）を渡して球面投影を行いながら記述子を生成できます。未指定の場合は歪みゼロの等角投影が使用されます。
+全方位画像など水平方向がループする画像に対して、レンズパラメータ（`fx, fy, cx, cy, k1, k2, k3, k4`）を渡して球面投影を行いながら記述子を生成できます。キーポイント検出は通常の `EfficientFeatures` などで行い、`cv::cuda::SphericalORB` で記述子を計算します。
 
 ```cpp
 #include <cuda_efficient_features.h>
+#include <cuda_efficient_descriptors.h>
 
-// レンズパラメータを準備（例: 等角投影 + 歪み係数）
-cuda_efficient_features::SphericalLensParams lens;
+// 1. 水平ラップ不要な検出器でキーポイントを取得
+auto detector = cv::cuda::EfficientFeatures::create(
+        /*nfeatures=*/5000, /*scaleFactor=*/1.2f, /*nlevels=*/8,
+        /*firstLevel=*/0, /*fastThreshold=*/20, /*nonmaxRadius=*/15,
+        cv::cuda::EfficientFeatures::ORB);
+
+cv::cuda::GpuMat image_gpu(image_cpu);
+std::vector<cv::KeyPoint> keypoints;
+detector->detect(image_gpu, keypoints);
+
+// 2. レンズパラメータを準備（例: 歪み込みの等角投影）
+cv::cuda::SphericalLensParams lens;
 lens.fx = fx; lens.fy = fy; lens.cx = cx; lens.cy = cy;
 lens.k1 = k1; lens.k2 = k2; lens.k3 = k3; lens.k4 = k4;
 
-// Spherical ORB 記述子抽出器を作成
-auto sphorb = cuda_efficient_features::SphericalORB::create(/*descriptorSizeBytes=*/32, lens);
-
-cv::cuda::GpuMat image_gpu = cv::cuda::GpuMat(image_cpu);
-std::vector<cv::KeyPoint> keypoints;
+// 3. Spherical ORB 記述子を計算
+auto sphorb = cv::cuda::SphericalORB::create(/*scaleFactor=*/1.0f, lens);
 cv::cuda::GpuMat descriptors_gpu;
-
-// 水平ラップを考慮した記述子計算
-sphorb->detectAndCompute(image_gpu, cv::cuda::GpuMat(), keypoints, descriptors_gpu, false);
+sphorb->compute(image_gpu, keypoints, descriptors_gpu);
 ```
 
 ### AKAZE の使用例
 #### AKAZE (CUDA 実装)
-`cuda_efficient_features::EAKAZE` を利用すると、MLDB 形式の AKAZE 記述子を GPU 上で計算できます。`descriptorSizeBytes` に 32（256bit）または 64（512bit）を指定してください。
+`cv::cuda::AKAZE` を利用すると、MLDB 形式の AKAZE 記述子を GPU 上で計算できます。`descriptorBits` に 256 または 512 を指定します。
 
 ```cpp
 #include <cuda_efficient_features.h>
+#include <cuda_efficient_descriptors.h>
 
-// 512bit の AKAZE 記述子抽出器を作成
-auto akaze = cuda_efficient_features::EAKAZE::create(/*descriptorSizeBytes=*/64);
+// 512bit の AKAZE 記述子抽出器を作成（スケールは ORB キーポイント用の 1.0f）
+auto akaze = cv::cuda::AKAZE::create(/*scaleFactor=*/1.0f, /*descriptorBits=*/512);
 
-cv::cuda::GpuMat image_gpu = cv::cuda::GpuMat(image_cpu);
+cv::cuda::GpuMat image_gpu(image_cpu);
 std::vector<cv::KeyPoint> keypoints;
 cv::cuda::GpuMat descriptors_gpu;
 
-// キーポイント検出と記述子計算（同期版）
-akaze->detectAndCompute(image_gpu, cv::cuda::GpuMat(), keypoints, descriptors_gpu, false);
+// 事前にキーポイントを検出してから記述子を計算
+auto detector = cv::cuda::EfficientFeatures::create(
+        /*nfeatures=*/5000, /*scaleFactor=*/1.2f, /*nlevels=*/8,
+        /*firstLevel=*/0, /*fastThreshold=*/20, /*nonmaxRadius=*/15,
+        cv::cuda::EfficientFeatures::BAD_256);
+detector->detect(image_gpu, keypoints);
+
+// 同期版
+akaze->compute(image_gpu, keypoints, descriptors_gpu);
 
 // 非同期版（ストリームを指定）
 cv::cuda::Stream stream;
-akaze->detectAndComputeAsync(image_gpu, cv::cuda::GpuMat(), keypoints, descriptors_gpu, false, stream);
+akaze->computeAsync(image_gpu, keypoints, descriptors_gpu, stream);
 stream.waitForCompletion();
 ```
 

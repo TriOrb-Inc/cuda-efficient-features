@@ -29,7 +29,7 @@ static std::string keys =
 "{ max-keypoints   |  10000 | maximum number of keypoints.                }"
 "{ fast-threshold  |     20 | FAST threshold.                             }"
 "{ nonmax-radius   |     15 | radius of non-maximum suppression.          }"
-"{ descriptor-type |      0 | descriptor type(0:BAD 1:HashSIFT).          }"
+"{ descriptor-type |      0 | descriptor type(0:BAD 1:HashSIFT 2:AKAZE 3:SphericalAKAZE 4:ORB 5:SphericalORB). }"
 "{ descriptor-bits |    256 | descriptor bits(256 or 512).                }"
 "{ compute-async   |        | compute asynchronously.                     }"
 "{ help  h         |        | print help message.                         }";
@@ -49,7 +49,7 @@ int main(int argc, char* argv[])
 	const int fastThreshold = parser.get<int>("fast-threshold");
 	const int nonmaxRadius = parser.get<int>("nonmax-radius");
 	const int descType = parser.get<int>("descriptor-type");
-	const int descBits = parser.get<int>("descriptor-bits");
+        const int descBits = normalizeDescriptorBits(descType, parser.get<int>("descriptor-bits"));
 	const bool computeAsync = parser.has("compute-async");
 
 	if (!parser.check())
@@ -66,7 +66,7 @@ int main(int argc, char* argv[])
 		std::exit(EXIT_FAILURE);
 	}
 
-	const char* descStr[] = { "BAD", "HashSIFT" };
+        const char* descStr[] = { "BAD", "HashSIFT", "AKAZE", "SphericalAKAZE", "ORB", "SphericalORB" };
 
 	std::cout << "=== configulations ===" << std::endl;
 	std::cout << "image size      : " << image.size() << std::endl;

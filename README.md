@@ -116,6 +116,99 @@ Use the `--help` or `-h` option for detailed information.
 ./samples/sample_feature_extraction -h
 ```
 
+### ORB / Spherical ORB の使用例
+#### ORB (CUDA 実装)
+`cuda_efficient_features::EORB` を用いることで、ORB 記述子を GPU 上で生成できます。キーポイントの検出と記述子の計算は `cv::cuda::GpuMat` を直接扱う非同期 API にも対応しています。
+
+```cpp
+#include <cuda_efficient_features.h>
+
+// CUDA ストリームを利用する場合は cv::cuda::Stream を用意する
+cv::cuda::Stream stream;
+
+// ORB 記述子抽出器を作成（デフォルトは 256bit）
+auto orb = cuda_efficient_features::EORB::create(/*descriptorSizeBytes=*/32);
+
+// 画像は GPU メモリ上に保持
+cv::cuda::GpuMat image_gpu = cv::cuda::GpuMat(image_cpu);
+std::vector<cv::KeyPoint> keypoints;
+cv::cuda::GpuMat descriptors_gpu;
+
+// キーポイント検出と記述子計算（同期版）
+orb->detectAndCompute(image_gpu, cv::cuda::GpuMat(), keypoints, descriptors_gpu, false);
+
+// 非同期版（ストリームを指定）
+orb->detectAndComputeAsync(image_gpu, cv::cuda::GpuMat(), keypoints, descriptors_gpu, false, stream);
+stream.waitForCompletion();
+```
+
+#### Spherical ORB (CUDA 実装)
+全方位画像など水平方向がループする画像に対して、レンズパラメータ（`fx, fy, cx, cy, k1, k2, k3, k4`）を渡して球面投影を行いながら記述子を生成できます。未指定の場合は歪みゼロの等角投影が使用されます。
+
+```cpp
+#include <cuda_efficient_features.h>
+
+// レンズパラメータを準備（例: 等角投影 + 歪み係数）
+cuda_efficient_features::SphericalLensParams lens;
+lens.fx = fx; lens.fy = fy; lens.cx = cx; lens.cy = cy;
+lens.k1 = k1; lens.k2 = k2; lens.k3 = k3; lens.k4 = k4;
+
+// Spherical ORB 記述子抽出器を作成
+auto sphorb = cuda_efficient_features::SphericalORB::create(/*descriptorSizeBytes=*/32, lens);
+
+cv::cuda::GpuMat image_gpu = cv::cuda::GpuMat(image_cpu);
+std::vector<cv::KeyPoint> keypoints;
+cv::cuda::GpuMat descriptors_gpu;
+
+// 水平ラップを考慮した記述子計算
+sphorb->detectAndCompute(image_gpu, cv::cuda::GpuMat(), keypoints, descriptors_gpu, false);
+```
+
+### AKAZE の使用例
+#### AKAZE (CUDA 実装)
+`cuda_efficient_features::EAKAZE` を利用すると、MLDB 形式の AKAZE 記述子を GPU 上で計算できます。`descriptorSizeBytes` に 32（256bit）または 64（512bit）を指定してください。
+
+```cpp
+#include <cuda_efficient_features.h>
+
+// 512bit の AKAZE 記述子抽出器を作成
+auto akaze = cuda_efficient_features::EAKAZE::create(/*descriptorSizeBytes=*/64);
+
+cv::cuda::GpuMat image_gpu = cv::cuda::GpuMat(image_cpu);
+std::vector<cv::KeyPoint> keypoints;
+cv::cuda::GpuMat descriptors_gpu;
+
+// キーポイント検出と記述子計算（同期版）
+akaze->detectAndCompute(image_gpu, cv::cuda::GpuMat(), keypoints, descriptors_gpu, false);
+
+// 非同期版（ストリームを指定）
+cv::cuda::Stream stream;
+akaze->detectAndComputeAsync(image_gpu, cv::cuda::GpuMat(), keypoints, descriptors_gpu, false, stream);
+stream.waitForCompletion();
+```
+
+#### Spherical AKAZE (CUDA 実装)
+`cuda_efficient_features::SphericalAKAZE` を使うと、レンズ歪みを考慮した水平ラップ付きの AKAZE 記述子を生成できます。ORB と同様に、fx/fy/cx/cy/k1〜k4 を含むレンズパラメータを渡すか、未指定なら入力画像サイズから等角投影の既定値が使用されます。
+
+```cpp
+#include <cuda_efficient_features.h>
+
+// 歪み係数付きのレンズパラメータを設定
+cuda_efficient_features::SphericalLensParams lens;
+lens.fx = fx; lens.fy = fy; lens.cx = cx; lens.cy = cy;
+lens.k1 = k1; lens.k2 = k2; lens.k3 = k3; lens.k4 = k4;
+
+// 512bit の Spherical AKAZE 記述子抽出器を作成
+auto sph_akaze = cuda_efficient_features::SphericalAKAZE::create(/*descriptorSizeBytes=*/64, lens);
+
+cv::cuda::GpuMat image_gpu = cv::cuda::GpuMat(image_cpu);
+std::vector<cv::KeyPoint> keypoints;
+cv::cuda::GpuMat descriptors_gpu;
+
+// 水平ラップとレンズ歪みを考慮した記述子計算
+sph_akaze->detectAndCompute(image_gpu, cv::cuda::GpuMat(), keypoints, descriptors_gpu, false);
+```
+
 ### `tests`
 Run the following command.
 ```

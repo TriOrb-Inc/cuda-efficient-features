@@ -28,16 +28,22 @@ limitations under the License.
 #include <opencv2/core/cuda.hpp>
 #include <cuda_runtime.h>
 
+#include "../include/cuda_efficient_descriptors.h"
+
 namespace cv
 {
 	namespace cuda
 	{
 		namespace gpu
 		{
-			void computeORB(const GpuMat &integral, const GpuMat &keypoints, GpuMat &descriptors,
-							float scaleFactor, int paramSize, Size patchSize, cudaStream_t stream);
+                        void computeORB(const GpuMat &integral, const GpuMat &keypoints, GpuMat &descriptors,
+                                                        float scaleFactor, int paramSize, Size patchSize, bool wrapHorizontal,
+                                                        cudaStream_t stream);
 
-			void calcIntegralImage(const GpuMat &src, GpuMat &dst, Stream &stream);
+                        void normalizeSphericalKeypoints(GpuMat &keypoints, Size imageSize,
+                                const SphericalLensParams &lensParams, cudaStream_t stream);
+
+                        void calcIntegralImage(const GpuMat &src, GpuMat &dst, Stream &stream);
 
 		} // namespace gpu
 	} // namespace cuda

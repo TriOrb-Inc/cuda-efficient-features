@@ -16,20 +16,47 @@ limitations under the License.
 
 #include "sample_common.h"
 
+#include <iostream>
+
 #include <opencv2/imgproc.hpp>
 #include <opencv2/highgui.hpp>
 
 cv::cuda::EfficientFeatures::DescriptorType getDescriptorType(int descType, int descBits)
 {
-	using namespace cv::cuda;
+        using namespace cv::cuda;
 
-	if (descType == BAD)
-		return descBits == 256 ? EfficientFeatures::BAD_256 : EfficientFeatures::BAD_512;
+        if (descType == BAD)
+                return descBits == 256 ? EfficientFeatures::BAD_256 : EfficientFeatures::BAD_512;
 
-	if (descType == HashSIFT)
-		return descBits == 256 ? EfficientFeatures::HASH_SIFT_256 : EfficientFeatures::HASH_SIFT_512;
+        if (descType == HashSIFT)
+                return descBits == 256 ? EfficientFeatures::HASH_SIFT_256 : EfficientFeatures::HASH_SIFT_512;
 
-	return EfficientFeatures::HASH_SIFT_256;
+        if (descType == AKAZE)
+                return descBits == 256 ? EfficientFeatures::AKAZE_256 : EfficientFeatures::AKAZE_512;
+
+        if (descType == SphericalAKAZE)
+                return descBits == 256 ? EfficientFeatures::SPHERICAL_AKAZE_256 : EfficientFeatures::SPHERICAL_AKAZE_512;
+
+        if (descType == ORB)
+                return EfficientFeatures::ORB;
+
+        if (descType == SphericalORB)
+                return EfficientFeatures::SPHERICAL_ORB;
+
+        return EfficientFeatures::HASH_SIFT_256;
+}
+
+int normalizeDescriptorBits(int descType, int descBits)
+{
+        const int sanitized = descBits == 512 ? 512 : 256;
+
+        if ((descType == ORB || descType == SphericalORB) && sanitized == 512)
+        {
+                std::cerr << "descriptor-bits=512 is not supported for ORB/SphericalORB. Fallback to 256 bits." << std::endl;
+                return 256;
+        }
+
+        return sanitized;
 }
 
 void convertToGray(const cv::Mat& src, cv::Mat& dst)

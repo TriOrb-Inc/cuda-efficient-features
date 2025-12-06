@@ -30,7 +30,9 @@ enum { BAD,
        SphericalORB };
 
 cv::cuda::EfficientFeatures::DescriptorType getDescriptorType(int descType, int descBits);
+int sanitizeDescriptorType(int descType);
 int normalizeDescriptorBits(int descType, int descBits);
+const char* descriptorTypeName(int descType);
 void convertToGray(const cv::Mat& src, cv::Mat& dst);
 void drawKeypoints(const cv::Mat& src, const std::vector<cv::KeyPoint>& keypoints, cv::Mat& dst, cv::Size maxSize = cv::Size(2048, 1024));
 void drawMatches(const cv::Mat& img1, const std::vector<cv::KeyPoint>& keypoints1, const cv::Mat& img2, const std::vector<cv::KeyPoint>& keypoints2,

@@ -30,7 +30,7 @@ static std::string keys =
 "{ fast-threshold  |     20 | FAST threshold.                                                    }"
 "{ num-levels      |      8 | number of pyramid levels.                                          }"
 "{ nonmax-radius   |     15 | radius of non-maximum suppression.                                 }"
-"{ descriptor-type |      0 | descriptor type(0:BAD 1:HashSIFT 2:AKAZE 3:ORB 4:SphericalORB).               }"
+"{ descriptor-type |      0 | descriptor type(0:BAD 1:HashSIFT 2:SphericalBAD 3:SphericalHashSIFT 4:AKAZE 5:SphericalAKAZE 6:ORB 7:SphericalORB).               }"
 "{ descriptor-bits |    256 | descriptor bits(256 or 512).                                       }"
 "{ benchmark-type  |      0 | benchmark type(0:detect-and-compute 1:detect-only 2:compute-only). }"
 "{ num-iterations  |    100 | number of iterations for benchmark .                               }"
@@ -66,7 +66,7 @@ int main(int argc, char* argv[])
 	const int nlevels = parser.get<int>("num-levels");
 	const int fastThreshold = parser.get<int>("fast-threshold");
 	const int nonmaxRadius = parser.get<int>("nonmax-radius");
-	const int descType = parser.get<int>("descriptor-type");
+        const int descType = sanitizeDescriptorType(parser.get<int>("descriptor-type"));
         const int descBits = normalizeDescriptorBits(descType, parser.get<int>("descriptor-bits"));
 	const int benchType = parser.get<int>("benchmark-type");
 	const int niterations = parser.get<int>("num-iterations");
@@ -85,12 +85,11 @@ int main(int argc, char* argv[])
 		std::exit(EXIT_FAILURE);
 	}
 
-    const char* descStr[] = { "BAD", "HashSIFT", "AKAZE", "ORB", "SphericalORB" };
-	const char* benchStr[] = { "detect-and-compute", "detect-only", "compute-only" };
+        const char* benchStr[] = { "detect-and-compute", "detect-only", "compute-only" };
 
 	std::cout << "=== configulations ===" << std::endl;
 	std::cout << "image size      : " << image.size() << std::endl;
-	std::cout << "descriptor type : " << descStr[descType] << std::endl;
+        std::cout << "descriptor type : " << descriptorTypeName(descType) << std::endl;
 	std::cout << "descriptor bits : " << descBits << std::endl;
 	std::cout << "max keypoints   : " << nfeatures << std::endl;
 	std::cout << "num levels      : " << nlevels << std::endl;

@@ -56,6 +56,7 @@ namespace cv
                                 GpuMat integral;
                                 GpuMat keypoints;
                                 GpuMat descriptors;
+                                Size lensBaseSize;
                         };
 
                         inline bool hasValidLens(const SphericalLensParams &lens)
@@ -125,7 +126,7 @@ namespace cv
                                 CV_Assert(_image.type() == CV_8U);
 
                                 const Size imageSize = _image.size();
-                                const SphericalLensParams resolvedLens = resolveLens(lens, imageSize);
+                                const SphericalLensParams resolvedLens = scaleLensForImage(lens, imageSize, buffers.lensBaseSize);
 
                                 getInputMat(_image, buffers.image, stream);
 
@@ -198,16 +199,14 @@ namespace cv
                         void compute(InputArray _image, KeyPoints &_keypoints, OutputArray _descriptors) override
                         {
                                 const std::variant<_InputArray, KeyPoints> keypoints = _keypoints;
-                                const SphericalLensParams scaledLens = scaleLensForImage(lensParams_, _image.size(), lensBaseSize_);
                                 computeDescriptors<true>(_image, keypoints, _descriptors, Stream::Null(), scaleFactor_, buffers_,
-                                        scaledLens);
+                                        lensParams_);
                         }
 
                         void computeAsync(InputArray _image, InputArray _keypoints, OutputArray _descriptors, Stream &stream) override
                         {
                                 const std::variant<_InputArray, KeyPoints> keypoints = _keypoints;
-                                const SphericalLensParams scaledLens = scaleLensForImage(lensParams_, _image.size(), lensBaseSize_);
-                                computeDescriptors<true>(_image, keypoints, _descriptors, stream, scaleFactor_, buffers_, scaledLens);
+                                computeDescriptors<true>(_image, keypoints, _descriptors, stream, scaleFactor_, buffers_, lensParams_);
                         }
 
                         int descriptorSize() const override { return PARAM_SIZE / 8; }
@@ -217,7 +216,6 @@ namespace cv
                 private:
                         float scaleFactor_;
                         SphericalLensParams lensParams_;
-                        Size lensBaseSize_;
                         ORBBuffers buffers_;
                 };
 

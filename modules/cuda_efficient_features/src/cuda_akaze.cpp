@@ -169,12 +169,6 @@ namespace cuda
                                 return;
 
                         std::vector<KeyPoint> hostKeypoints = akaze_internal::downloadKeypointsScaled(keypoints, scaleFactor_, stream);
-                        if (hostKeypoints.empty())
-                        {
-                                descriptors.release();
-                                return;
-                        }
-
                         CV_Assert(image.type() == CV_8U);
 
                         Mat hostImage;
@@ -184,6 +178,13 @@ namespace cuda
                                 image.getGpuMat().download(hostImage, stream);
                         else
                                 CV_Error(Error::StsBadArg, "Unsupported image type for AKAZE");
+
+                        stream.waitForCompletion();
+                        if (hostKeypoints.empty())
+                        {
+                                descriptors.release();
+                                return;
+                        }
 
                         Mat hostDescriptors;
                         akaze_->compute(hostImage, hostKeypoints, hostDescriptors);
@@ -273,6 +274,7 @@ namespace cuda
                         }
 
                         Mat hostImage = downloadImage(image, stream);
+                        stream.waitForCompletion();
                         if (hostImage.empty())
                                 return;
 

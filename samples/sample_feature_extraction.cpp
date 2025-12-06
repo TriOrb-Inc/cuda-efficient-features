@@ -29,7 +29,7 @@ static std::string keys =
 "{ max-keypoints   |  10000 | maximum number of keypoints.                }"
 "{ fast-threshold  |     20 | FAST threshold.                             }"
 "{ nonmax-radius   |     15 | radius of non-maximum suppression.          }"
-"{ descriptor-type |      0 | descriptor type(0:BAD 1:HashSIFT 2:AKAZE 3:ORB 4:SphericalORB). }"
+"{ descriptor-type |      0 | descriptor type(0:BAD 1:HashSIFT 2:SphericalBAD 3:SphericalHashSIFT 4:AKAZE 5:SphericalAKAZE 6:ORB 7:SphericalORB). }"
 "{ descriptor-bits |    256 | descriptor bits(256 or 512).                }"
 "{ compute-async   |        | compute asynchronously.                     }"
 "{ help  h         |        | print help message.                         }";
@@ -48,7 +48,7 @@ int main(int argc, char* argv[])
 	const int nfeatures = parser.get<int>("max-keypoints");
 	const int fastThreshold = parser.get<int>("fast-threshold");
 	const int nonmaxRadius = parser.get<int>("nonmax-radius");
-	const int descType = parser.get<int>("descriptor-type");
+        const int descType = sanitizeDescriptorType(parser.get<int>("descriptor-type"));
         const int descBits = normalizeDescriptorBits(descType, parser.get<int>("descriptor-bits"));
 	const bool computeAsync = parser.has("compute-async");
 
@@ -66,11 +66,9 @@ int main(int argc, char* argv[])
 		std::exit(EXIT_FAILURE);
 	}
 
-        const char* descStr[] = { "BAD", "HashSIFT", "AKAZE", "ORB", "SphericalORB" };
-
-	std::cout << "=== configulations ===" << std::endl;
-	std::cout << "image size      : " << image.size() << std::endl;
-	std::cout << "descriptor type : " << descStr[descType] << std::endl;
+        std::cout << "=== configulations ===" << std::endl;
+        std::cout << "image size      : " << image.size() << std::endl;
+        std::cout << "descriptor type : " << descriptorTypeName(descType) << std::endl;
 	std::cout << "descriptor bits : " << descBits << std::endl;
 	std::cout << "max keypoints   : " << nfeatures << std::endl;
 	std::cout << "compute async   : " << (computeAsync ? "Yes" : "No") << std::endl;

@@ -55,10 +55,51 @@ namespace cv
                                 kpt.pt += offset;
                 }
 
-                inline bool hasValidLens(const SphericalLensParams& lens)
-                {
-                        return lens.fx > 0.f && lens.fy > 0.f;
-                }
+        inline bool hasValidLens(const SphericalLensParams& lens)
+        {
+                return lens.fx > 0.f && lens.fy > 0.f;
+        }
+
+        inline SphericalLensParams resolveLens(const SphericalLensParams& lens, const Size& imageSize)
+        {
+                if (hasValidLens(lens))
+                        return lens;
+
+                SphericalLensParams fallback;
+                fallback.fx = static_cast<float>(imageSize.width) / 6.2831853071795864769f;
+                fallback.fy = static_cast<float>(imageSize.height) / 3.14159265358979323846f;
+                fallback.cx = 0.f;
+                fallback.cy = static_cast<float>(imageSize.height) * 0.5f;
+                fallback.k1 = 0.f;
+                fallback.k2 = 0.f;
+                fallback.k3 = 0.f;
+                fallback.k4 = 0.f;
+                return fallback;
+        }
+
+        inline SphericalLensParams scaleLensForImage(const SphericalLensParams& lens, const Size& imageSize, Size& baseSize)
+        {
+                SphericalLensParams resolved = resolveLens(lens, imageSize);
+
+                if (!hasValidLens(lens))
+                        return resolved;
+
+                if (baseSize.area() == 0)
+                        baseSize = imageSize;
+
+                if (baseSize == imageSize)
+                        return resolved;
+
+                const float sx = static_cast<float>(imageSize.width) / static_cast<float>(baseSize.width);
+                const float sy = static_cast<float>(imageSize.height) / static_cast<float>(baseSize.height);
+
+                resolved.fx *= sx;
+                resolved.fy *= sy;
+                resolved.cx *= sx;
+                resolved.cy *= sy;
+
+                return resolved;
+        }
 
                 inline Point2f toEquirectangular(const Point2f& pt, const Size& imageSize, const SphericalLensParams& lens)
                 {
@@ -152,18 +193,7 @@ namespace cv
                         std::vector<KeyPoint> scaled = keypoints;
                         applyScale(scaled, scale_factor_);
 
-                        SphericalLensParams lens = lens_params_;
-                        if (!hasValidLens(lens))
-                        {
-                                lens.fx = static_cast<float>(imageMat.cols) / 6.2831853071795864769f;
-                                lens.fy = static_cast<float>(imageMat.rows) / 3.14159265358979323846f;
-                                lens.cx = 0.f;
-                                lens.cy = static_cast<float>(imageMat.rows) * 0.5f;
-                                lens.k1 = 0.f;
-                                lens.k2 = 0.f;
-                                lens.k3 = 0.f;
-                                lens.k4 = 0.f;
-                        }
+                        const SphericalLensParams lens = scaleLensForImage(lens_params_, imageMat.size(), lens_base_size_);
 
                         for (auto& kpt : scaled)
                                 kpt.pt = toEquirectangular(kpt.pt, imageMat.size(), lens);
@@ -180,6 +210,7 @@ namespace cv
         private:
                 float scale_factor_;
                 SphericalLensParams lens_params_;
+                Size lens_base_size_;
                 Ptr<cv::ORB> orb_;
         };
 

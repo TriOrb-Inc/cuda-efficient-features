@@ -120,6 +120,20 @@ public:
         static Ptr<HashSIFT> create(float croppingScale, int nbits = SIZE_256_BITS);
 };
 
+class AKAZE : public EfficientDescriptorsAsync
+{
+public:
+        /** @brief Creates the AKAZE descriptor with MLDB (binary) output.
+        @param scaleFactor Adjust the sampling window around detected keypoints:
+        - <b> 1.00f </b> should be the scale for ORB keypoints
+        - <b> 6.75f </b> should be the scale for SIFT detected keypoints
+        - <b> 6.25f </b> is default and fits for KAZE, SURF detected keypoints
+        - <b> 5.00f </b> should be the scale for AKAZE, MSD, AGAST, FAST, BRISK keypoints
+        @param descriptorBits Desired descriptor length in bits. Supported values are 256 or 512.
+         */
+        static Ptr<AKAZE> create(float scaleFactor, int descriptorBits = 256);
+};
+
 struct SphericalLensParams
 {
         float fx = 0.f;

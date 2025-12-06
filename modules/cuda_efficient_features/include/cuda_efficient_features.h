@@ -36,15 +36,17 @@ public:
 	static const int SIZE_ROW     = 4;
 	static const int ROWS_COUNT   = 5;
 
-	enum DescriptorType
-	{
-		BAD_256,
-		BAD_512,
-		HASH_SIFT_256,
+        enum DescriptorType
+        {
+                BAD_256,
+                BAD_512,
+                HASH_SIFT_256,
                 HASH_SIFT_512,
+                AKAZE_256,
+                AKAZE_512,
                 ORB,
                 SPHERICAL_ORB,
-	};
+        };
 
 	static Ptr<EfficientFeatures> create(int nfeatures = 5000, float scaleFactor = 1.2f, int nlevels = 8,
 		int firstLevel = 0, int fastThreshold = 20, int nonmaxRadius = 15, DescriptorType dtype = HASH_SIFT_256);

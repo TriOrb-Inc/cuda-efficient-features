@@ -31,6 +31,9 @@ cv::cuda::EfficientFeatures::DescriptorType getDescriptorType(int descType, int 
         if (descType == HashSIFT)
                 return descBits == 256 ? EfficientFeatures::HASH_SIFT_256 : EfficientFeatures::HASH_SIFT_512;
 
+        if (descType == AKAZE)
+                return descBits == 256 ? EfficientFeatures::AKAZE_256 : EfficientFeatures::AKAZE_512;
+
         if (descType == ORB)
                 return EfficientFeatures::ORB;
 

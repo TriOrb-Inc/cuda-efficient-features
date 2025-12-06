@@ -21,12 +21,15 @@ limitations under the License.
 
 #include "cuda_efficient_descriptors.h"
 
+#include <algorithm>
+
 #include <opencv2/cudaarithm.hpp>
 #include <opencv2/core/cuda_stream_accessor.hpp>
 #include <cublas_v2.h>
 
 #include "cuda_hash_sift_internal.h"
 #include "cuda_efficient_features_internal.h"
+#include "cuda_orb_internal.h"
 #include "device_buffer.h"
 
 namespace cv
@@ -87,8 +90,59 @@ public:
 private:
 
 	DeviceBuffer bufTmp_;
-	cublasHandle_t handle_;
+        cublasHandle_t handle_;
 };
+
+namespace
+{
+        constexpr int HALF_PATCH = 16;
+
+        inline bool hasValidLens(const SphericalLensParams& lens)
+        {
+                return lens.fx > 0.f && lens.fy > 0.f;
+        }
+
+        inline SphericalLensParams resolveLens(const SphericalLensParams& lens, const Size& imageSize)
+        {
+                if (hasValidLens(lens))
+                        return lens;
+
+                SphericalLensParams fallback;
+                fallback.fx = static_cast<float>(imageSize.width) / 6.2831853071795864769f;
+                fallback.fy = static_cast<float>(imageSize.height) / 3.14159265358979323846f;
+                fallback.cx = 0.f;
+                fallback.cy = static_cast<float>(imageSize.height) * 0.5f;
+                fallback.k1 = 0.f;
+                fallback.k2 = 0.f;
+                fallback.k3 = 0.f;
+                fallback.k4 = 0.f;
+                return fallback;
+        }
+
+        inline SphericalLensParams scaleLensForImage(const SphericalLensParams& lens, const Size& imageSize, Size& baseSize)
+        {
+                SphericalLensParams resolved = resolveLens(lens, imageSize);
+
+                if (!hasValidLens(lens))
+                        return resolved;
+
+                if (baseSize.area() == 0)
+                        baseSize = imageSize;
+
+                if (baseSize == imageSize)
+                        return resolved;
+
+                const float sx = static_cast<float>(imageSize.width) / static_cast<float>(baseSize.width);
+                const float sy = static_cast<float>(imageSize.height) / static_cast<float>(baseSize.height);
+
+                resolved.fx *= sx;
+                resolved.fy *= sy;
+                resolved.cx *= sx;
+                resolved.cy *= sy;
+
+                return resolved;
+        }
+} // namespace
 
 class HashSIFTImpl : public HashSIFT
 {
@@ -158,12 +212,108 @@ private:
 
 	GpuMat image_, keypoints_, descriptors_, d_bMatrix_;
 	DeviceBuffer bufResponses_;
-	MatmulAndSign matmulAndSign_;
+        MatmulAndSign matmulAndSign_;
+};
+
+class SphericalHashSIFTImpl : public SphericalHashSIFT
+{
+public:
+
+        SphericalHashSIFTImpl(float croppingScale, int nbits, SphericalLensParams lensParams)
+                : croppingScale_(croppingScale), lensParams_(lensParams)
+        {
+#include "hash_sift.p512.h"
+#include "hash_sift.p256.h"
+
+                if (nbits == SIZE_512_BITS)
+                        Mat(512, 129, CV_64F, (void*)HASH_SIFT_512_VALS).convertTo(bMatrix_, CV_32F);
+                else if (nbits == SIZE_256_BITS)
+                        Mat(256, 129, CV_64F, (void*)HASH_SIFT_256_VALS).convertTo(bMatrix_, CV_32F);
+                else
+                        CV_Error(Error::StsBadArg, "n_bits should be either SIZE_512_BITS or SIZE_256_BITS");
+
+                nbits_ = bMatrix_.rows;
+                d_bMatrix_.upload(bMatrix_);
+        }
+
+        void computeHashSIFT(InputArray _image, InputKeyPoints _keypoints, OutputArray _descriptors, Stream& stream,
+                const SphericalLensParams& lens)
+        {
+                if (_image.empty())
+                        return;
+
+                if (isEmpty(_keypoints))
+                {
+                        _descriptors.release();
+                        return;
+                }
+
+                CV_Assert(_image.type() == CV_8U);
+
+                const Size imageSize = _image.size();
+                const SphericalLensParams resolvedLens = resolveLens(lens, imageSize);
+
+                getInputMat(_image, image_, stream);
+
+                GpuMat padded;
+                cv::cuda::copyMakeBorder(image_, padded, 0, 0, HALF_PATCH, HALF_PATCH, BORDER_WRAP, Scalar(), stream);
+                cv::cuda::copyMakeBorder(padded, image_, HALF_PATCH, HALF_PATCH, 0, 0, BORDER_REFLECT_101, Scalar(), stream);
+
+                getKeypointsMat(_keypoints, keypoints_, stream);
+                gpu::normalizeSphericalKeypoints(keypoints_, imageSize, resolvedLens, StreamAccessor::getStream(stream));
+                cv::cuda::add(keypoints_, Scalar(HALF_PATCH, HALF_PATCH, 0, 0), keypoints_, noArray(), -1, stream);
+
+                getOutputMat(_descriptors, descriptors_, keypoints_.rows, descriptorSize(), descriptorType());
+
+                GpuMat responses = bufResponses_.createMat(keypoints_.rows, 129, CV_32F);
+                gpu::computePatchSIFTs(image_, keypoints_, responses, croppingScale_, 1./6, 1.6, StreamAccessor::getStream(strea
+m));
+                matmulAndSign_(responses, d_bMatrix_, descriptors_, stream);
+
+                if (_descriptors.kind() == _InputArray::KindFlag::MAT)
+                        descriptors_.download(_descriptors);
+        }
+
+        void compute(InputArray _image, KeyPoints& _keypoints, OutputArray _descriptors) override
+        {
+                const std::variant<_InputArray, KeyPoints> keypoints = _keypoints;
+                const SphericalLensParams scaledLens = scaleLensForImage(lensParams_, _image.size(), lensBaseSize_);
+                computeHashSIFT(_image, keypoints, _descriptors, Stream::Null(), scaledLens);
+        }
+
+        void computeAsync(InputArray _image, InputArray _keypoints, OutputArray _descriptors, Stream& stream) override
+        {
+                const std::variant<_InputArray, KeyPoints> keypoints = _keypoints;
+                const SphericalLensParams scaledLens = scaleLensForImage(lensParams_, _image.size(), lensBaseSize_);
+                computeHashSIFT(_image, keypoints, _descriptors, stream, scaledLens);
+        }
+
+        int descriptorSize() const override { return nbits_ / 8; }
+        int descriptorType() const override { return CV_8U; }
+        int defaultNorm() const override { return NORM_HAMMING; }
+
+private:
+
+        float croppingScale_;
+        Mat bMatrix_;
+        int nbits_;
+
+        SphericalLensParams lensParams_;
+        Size lensBaseSize_;
+
+        GpuMat image_, keypoints_, descriptors_, d_bMatrix_;
+        DeviceBuffer bufResponses_;
+        MatmulAndSign matmulAndSign_;
 };
 
 Ptr<HashSIFT> HashSIFT::create(float croppingScale, int nbits)
 {
-	return makePtr<HashSIFTImpl>(croppingScale, nbits);
+        return makePtr<HashSIFTImpl>(croppingScale, nbits);
+}
+
+Ptr<SphericalHashSIFT> SphericalHashSIFT::create(float croppingScale, int nbits, SphericalLensParams lensParams)
+{
+        return makePtr<SphericalHashSIFTImpl>(croppingScale, nbits, lensParams);
 }
 
 } // namespace cuda

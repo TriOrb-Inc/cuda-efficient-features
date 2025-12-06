@@ -52,7 +52,25 @@ public:
 	@param n_bits Determine the number of bits in the descriptor. Should be either
 	  BAD::SIZE_512_BITS or BAD::SIZE_256_BITS.
 	*/
-	CV_WRAP static Ptr<BAD> create(float scale_factor, int n_bits = BAD::SIZE_512_BITS);
+        CV_WRAP static Ptr<BAD> create(float scale_factor, int n_bits = BAD::SIZE_512_BITS);
+};
+
+class SphericalBAD : public Feature2D
+{
+public:
+        /** @brief Creates the Spherical BAD descriptor with horizontal wrapping.
+        @param scale_factor Adjust the sampling window around detected keypoints:
+        - <b> 1.00f </b> should be the scale for ORB keypoints
+        - <b> 6.75f </b> should be the scale for SIFT detected keypoints
+        - <b> 6.25f </b> is default and fits for KAZE, SURF detected keypoints
+        - <b> 5.00f </b> should be the scale for AKAZE, MSD, AGAST, FAST, BRISK keypoints
+        @param n_bits Determine the number of bits in the descriptor. Should be either BAD::SIZE_512_BITS or
+        BAD::SIZE_256_BITS.
+        @param lens_params Lens parameters for spherical projection. If fx/fy are 0, the implementation falls
+        back to an equirectangular assumption derived from the input image size.
+        */
+        CV_WRAP static Ptr<SphericalBAD> create(float scale_factor, int n_bits = BAD::SIZE_512_BITS,
+                SphericalLensParams lens_params = {});
 };
 
 /**
@@ -87,6 +105,21 @@ public:
 	 * @return A pointer to the new cv::Feature2D descriptor object
 	 */
         CV_WRAP static Ptr<HashSIFT> create(float cropping_scale, int n_bits = SIZE_256_BITS, double sigma = 1.6);
+};
+
+class SphericalHashSIFT : public Feature2D
+{
+public:
+        /** @brief Creates the Spherical HashSIFT descriptor with horizontal wrapping.
+        @param cropping_scale Determines the size of the patch cropped for description. The diameter of the patch
+        will be: cropping_scale * kp.size
+        @param n_bits The number of bits of the descriptor (512 or 256)
+        @param sigma The standard deviation of the gaussian smoothing filter applied to the patch before description.
+        @param lens_params Lens parameters for spherical projection. If fx/fy are 0, the implementation falls back
+        to an equirectangular assumption derived from the input image size.
+        */
+        CV_WRAP static Ptr<SphericalHashSIFT> create(float cropping_scale, int n_bits = SIZE_256_BITS,
+                double sigma = 1.6, SphericalLensParams lens_params = {});
 };
 
 class EAKAZE : public Feature2D

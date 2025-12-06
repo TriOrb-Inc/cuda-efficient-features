@@ -31,6 +31,13 @@ cv::cuda::EfficientFeatures::DescriptorType getDescriptorType(int descType, int 
         if (descType == HashSIFT)
                 return descBits == 256 ? EfficientFeatures::HASH_SIFT_256 : EfficientFeatures::HASH_SIFT_512;
 
+        if (descType == SphericalBAD)
+                return descBits == 256 ? EfficientFeatures::SPHERICAL_BAD_256 : EfficientFeatures::SPHERICAL_BAD_512;
+
+        if (descType == SphericalHashSIFT)
+                return descBits == 256 ? EfficientFeatures::SPHERICAL_HASH_SIFT_256
+                                       : EfficientFeatures::SPHERICAL_HASH_SIFT_512;
+
         if (descType == AKAZE)
                 return descBits == 256 ? EfficientFeatures::AKAZE_256 : EfficientFeatures::AKAZE_512;
 

@@ -68,6 +68,18 @@ static Ptr<EfficientDescriptorsAsync> createDescriber(EfficientFeatures::Descrip
         case EfficientFeatures::HASH_SIFT_512:
                 return cuda::HashSIFT::create(1, cuda::HashSIFT::SIZE_512_BITS);
                 break;
+        case EfficientFeatures::SPHERICAL_BAD_256:
+                return cuda::SphericalBAD::create(1, cuda::BAD::SIZE_256_BITS);
+                break;
+        case EfficientFeatures::SPHERICAL_BAD_512:
+                return cuda::SphericalBAD::create(1, cuda::BAD::SIZE_512_BITS);
+                break;
+        case EfficientFeatures::SPHERICAL_HASH_SIFT_256:
+                return cuda::SphericalHashSIFT::create(1, cuda::HashSIFT::SIZE_256_BITS);
+                break;
+        case EfficientFeatures::SPHERICAL_HASH_SIFT_512:
+                return cuda::SphericalHashSIFT::create(1, cuda::HashSIFT::SIZE_512_BITS);
+                break;
         case EfficientFeatures::AKAZE_256:
                 return cuda::AKAZE::create(1, 256);
                 break;

@@ -23,6 +23,9 @@ limitations under the License.
 
 #include <opencv2/imgproc.hpp>
 
+#include <algorithm>
+#include <cmath>
+
 namespace cv
 {
 
@@ -47,6 +50,77 @@ static constexpr bool STEP7_L2_NORMALIZATION = true;
 static constexpr bool STEP8_TRIM_BIGVALS = true;
 static constexpr bool STEP9_UCHAR_SCALING = true;
 static constexpr bool USE_BICUBIC_INTERPOLATION = false;
+
+inline bool hasValidLens(const SphericalLensParams& lens)
+{
+        return lens.fx > 0.f && lens.fy > 0.f;
+}
+
+inline SphericalLensParams resolveLens(const SphericalLensParams& lens, const Size& imageSize)
+{
+        if (hasValidLens(lens))
+                return lens;
+
+        SphericalLensParams fallback;
+        fallback.fx = static_cast<float>(imageSize.width) / 6.2831853071795864769f;
+        fallback.fy = static_cast<float>(imageSize.height) / 3.14159265358979323846f;
+        fallback.cx = 0.f;
+        fallback.cy = static_cast<float>(imageSize.height) * 0.5f;
+        fallback.k1 = 0.f;
+        fallback.k2 = 0.f;
+        fallback.k3 = 0.f;
+        fallback.k4 = 0.f;
+        return fallback;
+}
+
+inline SphericalLensParams scaleLensForImage(const SphericalLensParams& lens, const Size& imageSize, Size& baseSize)
+{
+        SphericalLensParams resolved = resolveLens(lens, imageSize);
+
+        if (!hasValidLens(lens))
+                return resolved;
+
+        if (baseSize.area() == 0)
+                baseSize = imageSize;
+
+        if (baseSize == imageSize)
+                return resolved;
+
+        const float sx = static_cast<float>(imageSize.width) / static_cast<float>(baseSize.width);
+        const float sy = static_cast<float>(imageSize.height) / static_cast<float>(baseSize.height);
+
+        resolved.fx *= sx;
+        resolved.fy *= sy;
+        resolved.cx *= sx;
+        resolved.cy *= sy;
+
+        return resolved;
+}
+
+inline Point2f toEquirectangular(const Point2f& pt, const Size& imageSize, const SphericalLensParams& lens)
+{
+        constexpr float TWO_PI = 6.2831853071795864769f;
+        constexpr float HALF_PI = 1.5707963267948966192f;
+
+        const float nx = (pt.x - lens.cx) / lens.fx;
+        const float ny = (pt.y - lens.cy) / lens.fy;
+
+        const float r2 = nx * nx + ny * ny;
+        const float radial = 1.f + lens.k1 * r2 + lens.k2 * r2 * r2 + lens.k3 * r2 * r2 * r2 + lens.k4 * r2 * r2 * r2 * r2;
+
+        const float theta = nx * radial;
+        const float phi = ny * radial;
+
+        float wrappedTheta = std::fmod(theta, TWO_PI);
+        if (wrappedTheta < 0.f)
+                wrappedTheta += TWO_PI;
+
+        const float clampedPhi = std::max(-HALF_PI, std::min(HALF_PI, phi));
+
+        const float x = wrappedTheta * static_cast<float>(imageSize.width) / TWO_PI;
+        const float y = (clampedPhi + HALF_PI) * static_cast<float>(imageSize.height) / (2.f * HALF_PI);
+        return Point2f(x, y);
+}
 
 static void convertToGray(const Mat& src, Mat& dst)
 {
@@ -438,7 +512,60 @@ private:
 
 Ptr<HashSIFT> HashSIFT::create(float croppingScale, int n_bits, double sigma)
 {
-	return makePtr<HashSIFTImpl>(croppingScale, n_bits, sigma);
+        return makePtr<HashSIFTImpl>(croppingScale, n_bits, sigma);
+}
+
+class SphericalHashSIFTImpl : public SphericalHashSIFT
+{
+public:
+        SphericalHashSIFTImpl(float cropping_scale, int n_bits, double sigma, SphericalLensParams lens_params)
+                : lens_params_(lens_params)
+        {
+                hash_sift_ = HashSIFT::create(cropping_scale, n_bits, sigma);
+        }
+
+        void compute(InputArray image, std::vector<KeyPoint>& keypoints, OutputArray descriptors) override
+        {
+                if (image.empty())
+                        return;
+
+                if (keypoints.empty())
+                {
+                        descriptors.release();
+                        return;
+                }
+
+                CV_Assert(image.type() == CV_8U);
+
+                Mat padded;
+                const Mat imageMat = image.getMat();
+                copyMakeBorder(imageMat, padded, 0, 0, HALF_PATCH, HALF_PATCH, BORDER_WRAP);
+                copyMakeBorder(padded, padded, HALF_PATCH, HALF_PATCH, 0, 0, BORDER_REFLECT_101);
+
+                std::vector<KeyPoint> projected = keypoints;
+                const SphericalLensParams lens = scaleLensForImage(lens_params_, imageMat.size(), lens_base_size_);
+
+                for (auto& kpt : projected)
+                        kpt.pt = toEquirectangular(kpt.pt, imageMat.size(), lens) +
+                                Point2f(static_cast<float>(HALF_PATCH), static_cast<float>(HALF_PATCH));
+
+                hash_sift_->compute(padded, projected, descriptors);
+        }
+
+        int descriptorSize() const override { return hash_sift_->descriptorSize(); }
+        int descriptorType() const override { return hash_sift_->descriptorType(); }
+        int defaultNorm() const override { return hash_sift_->defaultNorm(); }
+
+private:
+        static constexpr int HALF_PATCH = 16;
+        Ptr<HashSIFT> hash_sift_;
+        SphericalLensParams lens_params_;
+        Size lens_base_size_;
+};
+
+Ptr<SphericalHashSIFT> SphericalHashSIFT::create(float cropping_scale, int n_bits, double sigma, SphericalLensParams lens_params)
+{
+        return makePtr<SphericalHashSIFTImpl>(cropping_scale, n_bits, sigma, lens_params);
 }
 
 } // namespace cv

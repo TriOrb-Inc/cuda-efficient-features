@@ -85,8 +85,26 @@ public:
 	- <b> 5.00f </b> should be the scale for AKAZE, MSD, AGAST, FAST, BRISK keypoints
 	@param nbits Determine the number of bits in the descriptor. Should be either
 	BAD::SIZE_512_BITS or BAD::SIZE_256_BITS.
-	 */
-	static Ptr<BAD> create(float scaleFactor, int nbits = SIZE_256_BITS);
+         */
+        static Ptr<BAD> create(float scaleFactor, int nbits = SIZE_256_BITS);
+};
+
+class SphericalBAD : public EfficientDescriptorsAsync
+{
+public:
+        /** @brief Creates the Spherical BAD descriptor with horizontal wrapping.
+        @param scaleFactor Adjust the sampling window around detected keypoints:
+        - <b> 1.00f </b> should be the scale for ORB keypoints
+        - <b> 6.75f </b> should be the scale for SIFT detected keypoints
+        - <b> 6.25f </b> is default and fits for KAZE, SURF detected keypoints
+        - <b> 5.00f </b> should be the scale for AKAZE, MSD, AGAST, FAST, BRISK keypoints
+        @param nbits Determine the number of bits in the descriptor. Should be either
+        BAD::SIZE_512_BITS or BAD::SIZE_256_BITS.
+        @param lensParams Lens parameters for spherical projection. If fx/fy are 0, the implementation
+        falls back to an equirectangular assumption derived from the input image size.
+         */
+        static Ptr<SphericalBAD> create(float scaleFactor, int nbits = BAD::SIZE_256_BITS,
+                SphericalLensParams lensParams = {});
 };
 
 /**
@@ -116,8 +134,23 @@ public:
 	The diameter of the patch will be: croppingScale * kp.size
 	@param nbits Determine the number of bits in the descriptor. Should be either
 	HashSIFT::SIZE_512_BITS or HashSIFT::SIZE_256_BITS.
-	 */
+         */
         static Ptr<HashSIFT> create(float croppingScale, int nbits = SIZE_256_BITS);
+};
+
+class SphericalHashSIFT : public EfficientDescriptorsAsync
+{
+public:
+        /** @brief Creates the Spherical HashSIFT descriptor with horizontal wrapping.
+        @param croppingScale Determines the size of the patch cropped for description. The diameter of
+        the patch will be: croppingScale * kp.size
+        @param nbits Determine the number of bits in the descriptor. Should be either HashSIFT::SIZE_512_BITS
+        or HashSIFT::SIZE_256_BITS.
+        @param lensParams Lens parameters for spherical projection. If fx/fy are 0, the implementation
+        falls back to an equirectangular assumption derived from the input image size.
+         */
+        static Ptr<SphericalHashSIFT> create(float croppingScale, int nbits = HashSIFT::SIZE_256_BITS,
+                SphericalLensParams lensParams = {});
 };
 
 class AKAZE : public EfficientDescriptorsAsync

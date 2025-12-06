@@ -41,6 +41,9 @@ cv::cuda::EfficientFeatures::DescriptorType getDescriptorType(int descType, int 
         if (descType == AKAZE)
                 return descBits == 256 ? EfficientFeatures::AKAZE_256 : EfficientFeatures::AKAZE_512;
 
+        if (descType == SphericalAKAZE)
+                return descBits == 256 ? EfficientFeatures::SPHERICAL_AKAZE_256 : EfficientFeatures::SPHERICAL_AKAZE_512;
+
         if (descType == ORB)
                 return EfficientFeatures::ORB;
 

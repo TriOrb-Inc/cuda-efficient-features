@@ -136,6 +136,23 @@ public:
         CV_WRAP static Ptr<EAKAZE> create(float scale_factor, int descriptor_bits = 256);
 };
 
+class SphericalAKAZE : public Feature2D
+{
+public:
+        /** @brief Creates the Spherical AKAZE descriptor with MLDB (binary) output and horizontal wrapping.
+        @param scale_factor Adjust the sampling window around detected keypoints:
+        - <b> 1.00f </b> should be the scale for ORB keypoints
+        - <b> 6.75f </b> should be the scale for SIFT detected keypoints
+        - <b> 6.25f </b> is default and fits for KAZE, SURF detected keypoints
+        - <b> 5.00f </b> should be the scale for AKAZE, MSD, AGAST, FAST, BRISK keypoints
+        @param descriptor_bits Desired descriptor length in bits. Supported values are 256 or 512.
+        @param lens_params Lens parameters for spherical projection. If fx/fy are 0, the implementation
+        falls back to an equirectangular assumption derived from the input image size.
+        */
+        CV_WRAP static Ptr<SphericalAKAZE> create(float scale_factor, int descriptor_bits = 256,
+                SphericalLensParams lens_params = {});
+};
+
 struct SphericalLensParams
 {
         float fx = 0.f;

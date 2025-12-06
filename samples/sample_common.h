@@ -25,6 +25,7 @@ enum { BAD,
        SphericalBAD,
        SphericalHashSIFT,
        AKAZE,
+       SphericalAKAZE,
        ORB,
        SphericalORB };
 

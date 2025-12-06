@@ -243,6 +243,8 @@ __global__ void computeORBKernel(const int *integral, int integralStep, int widt
 void computeORB(const GpuMat &integral, const GpuMat &keypoints, GpuMat &descriptors, float scaleFactor, int paramSize,
         Size patchSize, bool wrapHorizontal, cudaStream_t stream)
 {
+        CV_Assert(paramSize <= 256);
+
         const int descriptorSize = (paramSize + 7) / 8;
         CV_Assert(descriptors.type() == CV_8U && descriptors.cols == descriptorSize);
         CV_Assert(keypoints.type() == CV_32FC4);

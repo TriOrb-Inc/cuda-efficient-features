@@ -256,6 +256,7 @@ void computeORB(const GpuMat &integral, const GpuMat &keypoints, GpuMat &descrip
         computeORBKernel<<<grid, block, 0, stream>>>(integral.ptr<int>(), static_cast<int>(integral.step / sizeof(int)),
                 integral.cols - 1, integral.rows - 1, keypoints.ptr<float4>(), keypoints.rows, descriptors.ptr<unsigned char>(),
                 static_cast<int>(descriptors.step), scaleFactor, paramSize, patchSize.width, wrapHorizontal);
+        CUDA_CHECK(cudaGetLastError());
 }
 
 void normalizeSphericalKeypoints(GpuMat &keypoints, Size imageSize, const SphericalLensParams &lensParams, cudaStream_t stream)

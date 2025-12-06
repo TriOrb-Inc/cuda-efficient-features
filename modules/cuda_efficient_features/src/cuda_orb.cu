@@ -30,6 +30,7 @@ limitations under the License.
 #include <cuda_runtime.h>
 #include <device_launch_parameters.h>
 
+#include <opencv2/cudaarithm.hpp>
 #include <opencv2/cudaimgproc.hpp>
 
 namespace cv
@@ -52,10 +53,10 @@ static __device__ inline float getPixel(const int *integral, int integralStep, i
         }
         else
         {
-                x = max(0, min(x, width - 1));
+                x = (x < 0) ? 0 : ((x >= width) ? (width - 1) : x);
         }
 
-        y = max(0, min(y, height - 1));
+        y = (y < 0) ? 0 : ((y >= height) ? (height - 1) : y);
 
         const int idx = (y + 1) * integralStep + (x + 1);
         const int idxL = (y + 1) * integralStep + x;

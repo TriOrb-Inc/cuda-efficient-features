@@ -47,8 +47,8 @@ namespace cv
                 namespace
                 {
                         static constexpr int PARAM_SIZE = 256;
-                        static constexpr Size PATCH_SIZE = Size(31, 31);
-                        static constexpr int HALF_PATCH = PATCH_SIZE.width / 2;
+                        static const Size PATCH_SIZE = Size(31, 31);
+                        static const int HALF_PATCH = PATCH_SIZE.width / 2;
 
                         struct ORBBuffers
                         {

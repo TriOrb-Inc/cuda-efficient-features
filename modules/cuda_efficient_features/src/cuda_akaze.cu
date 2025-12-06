@@ -21,6 +21,7 @@ limitations under the License.
 */
 
 #include "cuda_efficient_descriptors.h"
+#include "cuda_efficient_features.h"
 
 #include <opencv2/core/cuda_stream_accessor.hpp>
 

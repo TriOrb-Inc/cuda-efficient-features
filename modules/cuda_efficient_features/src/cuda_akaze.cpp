@@ -81,7 +81,7 @@ namespace cuda
                         if (image.empty())
                                 return;
 
-                        const std::vector<KeyPoint> hostKeypoints = akaze_internal::downloadKeypointsScaled(keypoints, scaleFactor_, stream);
+                        std::vector<KeyPoint> hostKeypoints = akaze_internal::downloadKeypointsScaled(keypoints, scaleFactor_, stream);
                         if (hostKeypoints.empty())
                         {
                                 descriptors.release();

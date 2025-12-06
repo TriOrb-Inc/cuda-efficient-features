@@ -95,7 +95,7 @@ namespace
         template <bool WrapHorizontal>
         void computeBADDescriptors(InputArray _image, const std::variant<_InputArray, KeyPoints>& _keypoints,
                 OutputArray _descriptors, Stream& stream, float scaleFactor, int paramSize, Size patchSize,
-                BADBuffers& buffers, const SphericalLensParams& lens)
+                BADBuffers& buffers, const SphericalLensParams& lens, Size& lensBaseSize)
         {
                 if (_image.empty())
                         return;
@@ -109,7 +109,7 @@ namespace
                 CV_Assert(_image.type() == CV_8U);
 
                 const Size imageSize = _image.size();
-                const SphericalLensParams resolvedLens = resolveLens(lens, imageSize);
+                const SphericalLensParams resolvedLens = scaleLensForImage(lens, imageSize, lensBaseSize);
 
                 getInputMat(_image, buffers.image, stream);
 
@@ -221,7 +221,7 @@ public:
                 const std::variant<_InputArray, KeyPoints> keypoints = _keypoints;
                 const SphericalLensParams scaledLens = scaleLensForImage(lensParams_, _image.size(), lensBaseSize_);
                 computeBADDescriptors<true>(_image, keypoints, _descriptors, Stream::Null(), scaleFactor_, paramSize_, patchSize_,
-                        buffers_, scaledLens);
+                        buffers_, scaledLens, lensBaseSize_);
         }
 
         void computeAsync(InputArray _image, InputArray _keypoints, OutputArray _descriptors, Stream& stream) override
@@ -229,7 +229,7 @@ public:
                 const std::variant<_InputArray, KeyPoints> keypoints = _keypoints;
                 const SphericalLensParams scaledLens = scaleLensForImage(lensParams_, _image.size(), lensBaseSize_);
                 computeBADDescriptors<true>(_image, keypoints, _descriptors, stream, scaleFactor_, paramSize_, patchSize_,
-                        buffers_, scaledLens);
+                        buffers_, scaledLens, lensBaseSize_);
         }
 
         int descriptorSize() const override { return paramSize_ / 8; }

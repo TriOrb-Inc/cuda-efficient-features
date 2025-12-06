@@ -212,7 +212,7 @@ public:
         SphericalBADImpl(float scaleFactor, int nbits, SphericalLensParams lensParams)
                 : scaleFactor_(scaleFactor), nbits_(nbits), patchSize_(32, 32), lensParams_(lensParams)
         {
-                paramSize_ = nbits == SIZE_256_BITS ? 256 : 512;
+                paramSize_ = nbits == BAD::SIZE_256_BITS ? 256 : 512;
                 gpu::loadBoxPairParams(paramSize_);
         }
 

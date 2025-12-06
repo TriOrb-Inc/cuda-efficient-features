@@ -22,6 +22,18 @@ limitations under the License.
 namespace cv
 {
 
+struct SphericalLensParams
+{
+        float fx = 0.f;
+        float fy = 0.f;
+        float cx = 0.f;
+        float cy = 0.f;
+        float k1 = 0.f;
+        float k2 = 0.f;
+        float k3 = 0.f;
+        float k4 = 0.f;
+};
+
 /**
  * Implementation of the Box Average Difference (BAD) descriptor. The method uses features
  * computed from the difference of the average gray values of two boxes in the patch.
@@ -118,7 +130,7 @@ public:
         @param lens_params Lens parameters for spherical projection. If fx/fy are 0, the implementation falls back
         to an equirectangular assumption derived from the input image size.
         */
-        CV_WRAP static Ptr<SphericalHashSIFT> create(float cropping_scale, int n_bits = SIZE_256_BITS,
+        CV_WRAP static Ptr<SphericalHashSIFT> create(float cropping_scale, int n_bits = HashSIFT::SIZE_256_BITS,
                 double sigma = 1.6, SphericalLensParams lens_params = {});
 };
 
@@ -151,18 +163,6 @@ public:
         */
         CV_WRAP static Ptr<SphericalAKAZE> create(float scale_factor, int descriptor_bits = 256,
                 SphericalLensParams lens_params = {});
-};
-
-struct SphericalLensParams
-{
-        float fx = 0.f;
-        float fy = 0.f;
-        float cx = 0.f;
-        float cy = 0.f;
-        float k1 = 0.f;
-        float k2 = 0.f;
-        float k3 = 0.f;
-        float k4 = 0.f;
 };
 
 class EORB : public Feature2D

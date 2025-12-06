@@ -24,6 +24,18 @@ namespace cv
 namespace cuda
 {
 
+struct SphericalLensParams
+{
+        float fx = 0.f;
+        float fy = 0.f;
+        float cx = 0.f;
+        float cy = 0.f;
+        float k1 = 0.f;
+        float k2 = 0.f;
+        float k3 = 0.f;
+        float k4 = 0.f;
+};
+
 class EfficientDescriptorsAsync
 {
 public:
@@ -182,18 +194,6 @@ public:
          */
         static Ptr<SphericalAKAZE> create(float scaleFactor, int descriptorBits = 256,
                 SphericalLensParams lensParams = {});
-};
-
-struct SphericalLensParams
-{
-        float fx = 0.f;
-        float fy = 0.f;
-        float cx = 0.f;
-        float cy = 0.f;
-        float k1 = 0.f;
-        float k2 = 0.f;
-        float k3 = 0.f;
-        float k4 = 0.f;
 };
 
 class EORB : public EfficientDescriptorsAsync

@@ -25,7 +25,8 @@ limitations under the License.
 #include "sample_common.h"
 
 static std::string keys =
-"{ @input-image    | <none> | input image.                                                       }"
+"{ @input-image    |        | input image.                                                       }"
+"{ input-image     |        | input image path(optional, same as @input-image).                   }"
 "{ max-keypoints   |  10000 | maximum number of keypoints.                                       }"
 "{ fast-threshold  |     20 | FAST threshold.                                                    }"
 "{ num-levels      |      8 | number of pyramid levels.                                          }"
@@ -61,7 +62,9 @@ int main(int argc, char* argv[])
 	}
 
 	// get parameters
-	const std::string filename = parser.get<std::string>("@input-image");
+        const std::string filename = parser.has("input-image")
+                ? parser.get<std::string>("input-image")
+                : parser.get<std::string>("@input-image");
 	const int nfeatures = parser.get<int>("max-keypoints");
 	const int nlevels = parser.get<int>("num-levels");
 	const int fastThreshold = parser.get<int>("fast-threshold");
@@ -71,12 +74,19 @@ int main(int argc, char* argv[])
 	const int benchType = parser.get<int>("benchmark-type");
 	const int niterations = parser.get<int>("num-iterations");
 
-	if (!parser.check())
-	{
-		parser.printErrors();
-		parser.printMessage();
-		std::exit(EXIT_FAILURE);
-	}
+        if (!parser.check())
+        {
+                parser.printErrors();
+                parser.printMessage();
+                std::exit(EXIT_FAILURE);
+        }
+
+        if (filename.empty())
+        {
+                std::cerr << "input image path is required. Specify it as a positional argument or via --input-image." << std::endl;
+                parser.printMessage();
+                std::exit(EXIT_FAILURE);
+        }
 
 	cv::Mat image = cv::imread(filename);
 	if (image.empty())

@@ -155,8 +155,24 @@ int main(int argc, char* argv[])
         feature->setNonmaxRadius(nonmaxRadius);
         feature->setDescriptorType(getDescriptorType(descType, descBits));
 
-        feature->detectAndCompute(gray1, cv::noArray(), keypoints1, descriptors1);
-        feature->detectAndCompute(gray2, cv::noArray(), keypoints2, descriptors2);
+        const auto needsClassId = descType == AKAZE || descType == SphericalAKAZE;
+        const auto assignClassIdIfNeeded = [&](std::vector<cv::KeyPoint>& keypoints) {
+                if (!needsClassId)
+                        return;
+
+                for (auto& kp : keypoints)
+                {
+                        kp.class_id = 0;
+                }
+        };
+
+        feature->detect(gray1, cv::noArray(), keypoints1);
+        assignClassIdIfNeeded(keypoints1);
+        feature->compute(gray1, keypoints1, descriptors1);
+
+        feature->detect(gray2, cv::noArray(), keypoints2);
+        assignClassIdIfNeeded(keypoints2);
+        feature->compute(gray2, keypoints2, descriptors2);
 
         std::cout << "number of keypoins: " << keypoints1.size() << " " << keypoints2.size() << std::endl;
 

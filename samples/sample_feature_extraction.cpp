@@ -16,6 +16,7 @@ limitations under the License.
 
 #include <cstdlib>
 #include <iostream>
+#include <set>
 #include <string>
 
 #include <opencv2/core.hpp>
@@ -40,17 +41,79 @@ static std::string keys =
 
 int main(int argc, char* argv[])
 {
-	const cv::CommandLineParser parser(argc, argv, keys);
+        const cv::CommandLineParser parser(argc, argv, keys);
 	if (parser.has("help"))
 	{
 		parser.printMessage();
 		return 0;
 	}
 
-	// get parameters
+        const auto collectPositionalArgs = [](int argc, char* argv[]) {
+                std::vector<std::string> positional;
+                auto consumesValue = [](const std::string& opt) {
+                        static const std::set<std::string> withValue = {
+                                "--input-image",
+                                "--max-keypoints",
+                                "--fast-threshold",
+                                "--nonmax-radius",
+                                "--descriptor-type",
+                                "--descriptor-bits",
+                        };
+                        return withValue.count(opt) > 0;
+                };
+
+                for (int i = 1; i < argc; ++i)
+                {
+                        std::string arg(argv[i]);
+
+                        if (arg.rfind("--", 0) == 0)
+                        {
+                                const auto eq = arg.find('=');
+                                if (eq != std::string::npos)
+                                {
+                                        continue; // already contains its value
+                                }
+
+                                if (consumesValue(arg) && i + 1 < argc)
+                                {
+                                        ++i; // skip the following value
+                                }
+
+                                continue;
+                        }
+
+                        if (arg.rfind('-', 0) == 0)
+                        {
+                                continue; // short options (e.g., -h)
+                        }
+
+                        positional.emplace_back(std::move(arg));
+                }
+
+                return positional;
+        };
+
+        const auto positionalArgs = collectPositionalArgs(argc, argv);
+        if (parser.has("input-image") && !positionalArgs.empty())
+        {
+                std::cerr << "input image was specified both positionally and via --input-image. "
+                             "Please provide it only once." << std::endl;
+                parser.printMessage();
+                std::exit(EXIT_FAILURE);
+        }
+
+        if (positionalArgs.size() > 1)
+        {
+                std::cerr << "Too many positional arguments were provided. "
+                             "Specify exactly one input image (or use --input-image)." << std::endl;
+                parser.printMessage();
+                std::exit(EXIT_FAILURE);
+        }
+
+        // get parameters
         const std::string filename = parser.has("input-image")
                 ? parser.get<std::string>("input-image")
-                : parser.get<std::string>("@input-image");
+                : (positionalArgs.empty() ? std::string{} : positionalArgs.front());
 	const int nfeatures = parser.get<int>("max-keypoints");
 	const int fastThreshold = parser.get<int>("fast-threshold");
         const int nonmaxRadius = parser.get<int>("nonmax-radius");

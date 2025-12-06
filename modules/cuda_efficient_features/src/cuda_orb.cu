@@ -33,6 +33,8 @@ limitations under the License.
 #include <opencv2/cudaarithm.hpp>
 #include <opencv2/cudaimgproc.hpp>
 
+#include "cuda_macro.h"
+
 namespace cv
 {
 namespace cuda

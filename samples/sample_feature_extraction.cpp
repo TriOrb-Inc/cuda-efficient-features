@@ -105,7 +105,8 @@ int main(int argc, char* argv[])
         if (positionalArgs.size() > 1)
         {
                 std::cerr << "Too many positional arguments were provided. "
-                             "Specify exactly one input image (or use --input-image)." << std::endl;
+                             "Specify exactly one input image (or use --input-image). "
+                             "For matching two images, use samples/sample_feature_matching." << std::endl;
                 parser.printMessage();
                 std::exit(EXIT_FAILURE);
         }

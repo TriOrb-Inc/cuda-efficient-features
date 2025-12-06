@@ -95,6 +95,10 @@ struct SphericalLensParams
         float fy = 0.f;
         float cx = 0.f;
         float cy = 0.f;
+        float k1 = 0.f;
+        float k2 = 0.f;
+        float k3 = 0.f;
+        float k4 = 0.f;
 };
 
 class EORB : public Feature2D

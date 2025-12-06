@@ -73,6 +73,10 @@ namespace cv
                                 fallback.fy = static_cast<float>(imageSize.height) / 3.14159265358979323846f;
                                 fallback.cx = 0.f;
                                 fallback.cy = static_cast<float>(imageSize.height) * 0.5f;
+                                fallback.k1 = 0.f;
+                                fallback.k2 = 0.f;
+                                fallback.k3 = 0.f;
+                                fallback.k4 = 0.f;
                                 return fallback;
                         }
 

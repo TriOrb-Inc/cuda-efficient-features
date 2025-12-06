@@ -65,8 +65,15 @@ namespace cv
                         constexpr float TWO_PI = 6.2831853071795864769f;
                         constexpr float HALF_PI = 1.5707963267948966192f;
 
-                        const float theta = (pt.x - lens.cx) / lens.fx;
-                        const float phi = (pt.y - lens.cy) / lens.fy;
+                        const float nx = (pt.x - lens.cx) / lens.fx;
+                        const float ny = (pt.y - lens.cy) / lens.fy;
+
+                        const float r2 = nx * nx + ny * ny;
+                        const float radial = 1.f + lens.k1 * r2 + lens.k2 * r2 * r2 + lens.k3 * r2 * r2 * r2 +
+                                lens.k4 * r2 * r2 * r2 * r2;
+
+                        const float theta = nx * radial;
+                        const float phi = ny * radial;
 
                         float wrappedTheta = std::fmod(theta, TWO_PI);
                         if (wrappedTheta < 0.f)
@@ -152,6 +159,10 @@ namespace cv
                                 lens.fy = static_cast<float>(imageMat.rows) / 3.14159265358979323846f;
                                 lens.cx = 0.f;
                                 lens.cy = static_cast<float>(imageMat.rows) * 0.5f;
+                                lens.k1 = 0.f;
+                                lens.k2 = 0.f;
+                                lens.k3 = 0.f;
+                                lens.k4 = 0.f;
                         }
 
                         for (auto& kpt : scaled)

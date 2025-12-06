@@ -34,45 +34,6 @@ namespace cuda
 {
         namespace
         {
-                std::vector<KeyPoint> toKeypoints(InputArray keypoints)
-                {
-                        std::vector<KeyPoint> out;
-                        if (keypoints.empty())
-                                return out;
-
-                        Mat host;
-                        if (keypoints.kind() == _InputArray::KindFlag::MAT)
-                                host = keypoints.getMat();
-                        else if (keypoints.kind() == _InputArray::KindFlag::CUDA_GPU_MAT)
-                                keypoints.getGpuMat().download(host);
-                        else
-                                return out;
-
-                        if (host.empty())
-                                return out;
-
-                        const Vec2s* points = host.ptr<Vec2s>(EfficientFeatures::LOCATION_ROW);
-                        const float* responses = host.ptr<float>(EfficientFeatures::RESPONSE_ROW);
-                        const float* angles = host.ptr<float>(EfficientFeatures::ANGLE_ROW);
-                        const int* octaves = host.ptr<int>(EfficientFeatures::OCTAVE_ROW);
-                        const float* sizes = host.ptr<float>(EfficientFeatures::SIZE_ROW);
-
-                        const int nkeypoints = host.cols;
-                        out.resize(nkeypoints);
-                        for (int i = 0; i < nkeypoints; i++)
-                        {
-                                KeyPoint kpt;
-                                kpt.pt = Point2f(points[i][0], points[i][1]);
-                                kpt.response = responses[i];
-                                kpt.angle = angles[i];
-                                kpt.octave = octaves[i];
-                                kpt.size = sizes[i];
-                                out[i] = kpt;
-                        }
-
-                        return out;
-                }
-
                 void applyScale(std::vector<KeyPoint>& keypoints, float scaleFactor)
                 {
                         if (scaleFactor == 1.f)
@@ -82,6 +43,11 @@ namespace cuda
                                 kpt.size *= scaleFactor;
                 }
         } // namespace
+
+        namespace akaze_internal
+        {
+                std::vector<KeyPoint> downloadKeypointsScaled(InputArray keypoints, float scaleFactor, Stream& stream);
+        }
 
         class AKAZEImpl : public AKAZE
         {
@@ -115,7 +81,7 @@ namespace cuda
                         if (image.empty())
                                 return;
 
-                        const std::vector<KeyPoint> hostKeypoints = toKeypoints(keypoints);
+                        const std::vector<KeyPoint> hostKeypoints = akaze_internal::downloadKeypointsScaled(keypoints, scaleFactor_, stream);
                         if (hostKeypoints.empty())
                         {
                                 descriptors.release();
@@ -132,11 +98,8 @@ namespace cuda
                         else
                                 CV_Error(Error::StsBadArg, "Unsupported image type for AKAZE");
 
-                        std::vector<KeyPoint> scaled = hostKeypoints;
-                        applyScale(scaled, scaleFactor_);
-
                         Mat hostDescriptors;
-                        akaze_->compute(hostImage, scaled, hostDescriptors);
+                        akaze_->compute(hostImage, hostKeypoints, hostDescriptors);
 
                         descriptors.create(hostDescriptors.rows, hostDescriptors.cols, hostDescriptors.type());
                         if (descriptors.kind() == _InputArray::KindFlag::MAT)

@@ -271,6 +271,11 @@ void normalizeSphericalKeypoints(GpuMat &keypoints, Size imageSize, const Spheri
         const dim3 grid((keypoints.rows + block.x - 1) / block.x);
         normalizeSphericalKeypointsKernel<<<grid, block, 0, stream>>>(keypoints.ptr<float4>(), keypoints.rows, imageSize.width,
                 imageSize.height, lensParams);
+
+        CUDA_CHECK(cudaGetLastError());
+
+        if (stream == nullptr)
+                CUDA_CHECK(cudaStreamSynchronize(nullptr));
 }
 
 } // namespace gpu

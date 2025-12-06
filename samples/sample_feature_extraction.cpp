@@ -16,6 +16,7 @@ limitations under the License.
 
 #include <cstdlib>
 #include <iostream>
+#include <string>
 
 #include <opencv2/core.hpp>
 #include <opencv2/imgproc.hpp>
@@ -99,9 +100,9 @@ int main(int argc, char* argv[])
 	std::vector<cv::KeyPoint> keypoints;
 	cv::Mat descriptors;
 
-	if (computeAsync)
-	{
-		cv::cuda::GpuMat d_gray(gray), d_keypoints, d_descriptors;
+        if (computeAsync)
+        {
+                cv::cuda::GpuMat d_gray(gray), d_keypoints, d_descriptors;
 		cv::cuda::Stream stream;
 
 		feature->detectAndComputeAsync(d_gray, cv::noArray(), d_keypoints, d_descriptors, false, stream);
@@ -113,25 +114,43 @@ int main(int argc, char* argv[])
 	else
 	{
 		feature->detectAndCompute(gray, cv::noArray(), keypoints, descriptors);
-	}
+        }
 
-	std::cout << keypoints.size() << " keypoints found." << std::endl << std::endl;
+        std::cout << keypoints.size() << " keypoints found." << std::endl << std::endl;
+
+        auto makeOutputPath = [](const std::string& path) {
+                const auto pos = path.find_last_of("/\\");
+                const auto filename = (pos == std::string::npos) ? path : path.substr(pos + 1);
+                const auto dot = filename.find_last_of('.');
+                const auto stem = (dot == std::string::npos) ? filename : filename.substr(0, dot);
+                return stem + "_keypoints.png";
+        };
 
         // draw
+        cv::Mat draw;
+        drawKeypoints(image, keypoints, draw);
+
         if (noGui || std::getenv("DISPLAY") == nullptr)
         {
+                const auto outputPath = makeOutputPath(filename);
+                if (!cv::imwrite(outputPath, draw))
+                {
+                        std::cerr << "failed to write output image: " << outputPath << std::endl;
+                        std::exit(EXIT_FAILURE);
+                }
+
                 if (!noGui)
                 {
                         std::cerr << "DISPLAY is not set; skipping GUI rendering. Use --no-gui to silence this message." << std::endl;
                 }
+
+                std::cout << "output saved to: " << outputPath << std::endl;
         }
         else
         {
-                cv::Mat draw;
-                drawKeypoints(image, keypoints, draw);
                 cv::imshow("keypoints", draw);
                 cv::waitKey(0);
         }
 
-	return 0;
+        return 0;
 }

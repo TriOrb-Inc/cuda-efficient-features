@@ -241,17 +241,22 @@ public:
 		const bool needDescriptors = _descriptors.needed();
 		const cudaStream_t cuStream = StreamAccessor::getStream(stream);
 
-		getInputMat(_image, image_, stream);
+        getInputMat(_image, image_, stream);
+        calcImagePyramid(image_, imagePyr_, scales_, scaleFactor_, nlevels_, stream);
 
-		calcImagePyramid(image_, imagePyr_, scales_, scaleFactor_, nlevels_, stream);
+        if (!_mask.empty()) {
+            getInputMat(_mask, mask_, stream);
+            std::vector<float> __;
+            calcImagePyramid(mask_, maskPyr_, __, scaleFactor_, nlevels_, stream);
+        }
 
-		calcNumFeaturesPerLevel(nfeatures_, scaleFactor_, nlevels_, nfeaturesPerLevel_);
+        calcNumFeaturesPerLevel(nfeatures_, scaleFactor_, nlevels_, nfeaturesPerLevel_);
 
-		int nkeypoints = 0;
-		maskPyr_.resize(nlevels_);
-		kptsPyr_.resize(nlevels_);
-		kptsBuf_.resize(nlevels_);
-		for (int s = firstLevel_; s < nlevels_; s++)
+        int nkeypoints = 0;
+        maskPyr_.resize(nlevels_);
+        kptsPyr_.resize(nlevels_);
+        kptsBuf_.resize(nlevels_);
+        for (int s = firstLevel_; s < nlevels_; s++)
 		{
 			const GpuMat& image = imagePyr_[s];
 			GpuMat& mask = maskPyr_[s];
@@ -397,17 +402,17 @@ private:
 	int nonmaxRadius_;
 	DescriptorType descriptorType_;
 
-	GpuMat image_, keypoints_, descriptors_;
-	std::vector<GpuMat> imagePyr_, maskPyr_, kptsPyr_, blurPyr_, descPyr_;
+    GpuMat image_, mask_, keypoints_, descriptors_;
+    std::vector<GpuMat> imagePyr_, maskPyr_, kptsPyr_, blurPyr_, descPyr_;
 
-	DeviceBuffer fastBuf_, suppBuf_;
-	std::vector<DeviceBuffer> kptsBuf_;
+    DeviceBuffer fastBuf_, suppBuf_;
+    std::vector<DeviceBuffer> kptsBuf_;
 
-	HostMem h_buffer_;
-	int* h_count_;
+    HostMem h_buffer_;
+    int* h_count_;
 
-	std::vector<float> scales_;
-	std::vector<int> nfeaturesPerLevel_;
+    std::vector<float> scales_;
+    std::vector<int> nfeaturesPerLevel_;
 	Ptr<EfficientDescriptorsAsync> describer_;
 	Ptr<cuda::Filter> filter_;
 };

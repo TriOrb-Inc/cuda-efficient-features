@@ -219,17 +219,15 @@ public:
         void compute(InputArray _image, KeyPoints& _keypoints, OutputArray _descriptors) override
         {
                 const std::variant<_InputArray, KeyPoints> keypoints = _keypoints;
-                const SphericalLensParams scaledLens = scaleLensForImage(lensParams_, _image.size(), lensBaseSize_);
                 computeBADDescriptors<true>(_image, keypoints, _descriptors, Stream::Null(), scaleFactor_, paramSize_, patchSize_,
-                        buffers_, scaledLens, lensBaseSize_);
+                        buffers_, lensParams_, lensBaseSize_);
         }
 
         void computeAsync(InputArray _image, InputArray _keypoints, OutputArray _descriptors, Stream& stream) override
         {
                 const std::variant<_InputArray, KeyPoints> keypoints = _keypoints;
-                const SphericalLensParams scaledLens = scaleLensForImage(lensParams_, _image.size(), lensBaseSize_);
                 computeBADDescriptors<true>(_image, keypoints, _descriptors, stream, scaleFactor_, paramSize_, patchSize_,
-                        buffers_, scaledLens, lensBaseSize_);
+                        buffers_, lensParams_, lensBaseSize_);
         }
 
         int descriptorSize() const override { return paramSize_ / 8; }

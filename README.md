@@ -164,6 +164,29 @@ cv::cuda::GpuMat descriptors_gpu;
 sphorb->detectAndCompute(image_gpu, cv::cuda::GpuMat(), keypoints, descriptors_gpu, false);
 ```
 
+### AKAZE の使用例
+#### AKAZE (CUDA 実装)
+`cuda_efficient_features::EAKAZE` を利用すると、MLDB 形式の AKAZE 記述子を GPU 上で計算できます。`descriptorSizeBytes` に 32（256bit）または 64（512bit）を指定してください。
+
+```cpp
+#include <cuda_efficient_features.h>
+
+// 512bit の AKAZE 記述子抽出器を作成
+auto akaze = cuda_efficient_features::EAKAZE::create(/*descriptorSizeBytes=*/64);
+
+cv::cuda::GpuMat image_gpu = cv::cuda::GpuMat(image_cpu);
+std::vector<cv::KeyPoint> keypoints;
+cv::cuda::GpuMat descriptors_gpu;
+
+// キーポイント検出と記述子計算（同期版）
+akaze->detectAndCompute(image_gpu, cv::cuda::GpuMat(), keypoints, descriptors_gpu, false);
+
+// 非同期版（ストリームを指定）
+cv::cuda::Stream stream;
+akaze->detectAndComputeAsync(image_gpu, cv::cuda::GpuMat(), keypoints, descriptors_gpu, false, stream);
+stream.waitForCompletion();
+```
+
 ### `tests`
 Run the following command.
 ```

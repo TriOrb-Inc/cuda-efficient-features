@@ -47,8 +47,8 @@ namespace cv
                 namespace
                 {
                         static constexpr int PARAM_SIZE = 256;
-                        static constexpr Size PATCH_SIZE = Size(31, 31);
-                        static constexpr int HALF_PATCH = PATCH_SIZE.width / 2;
+                        static const Size PATCH_SIZE = Size(31, 31);
+                        static const int HALF_PATCH = PATCH_SIZE.width / 2;
 
                         struct ORBBuffers
                         {
@@ -78,6 +78,34 @@ namespace cv
                                 fallback.k3 = 0.f;
                                 fallback.k4 = 0.f;
                                 return fallback;
+                        }
+
+                        inline SphericalLensParams scaleLensForImage(const SphericalLensParams &lens, const Size &imageSize,
+                                Size &baseSize)
+                        {
+                                SphericalLensParams resolved = resolveLens(lens, imageSize);
+
+                                if (!hasValidLens(lens))
+                                {
+                                        // The lens was invalid, so the resolved lens is derived from the current image size.
+                                        return resolved;
+                                }
+
+                                if (baseSize.area() == 0)
+                                        baseSize = imageSize;
+
+                                if (baseSize == imageSize)
+                                        return resolved;
+
+                                const float sx = static_cast<float>(imageSize.width) / static_cast<float>(baseSize.width);
+                                const float sy = static_cast<float>(imageSize.height) / static_cast<float>(baseSize.height);
+
+                                resolved.fx *= sx;
+                                resolved.fy *= sy;
+                                resolved.cx *= sx;
+                                resolved.cy *= sy;
+
+                                return resolved;
                         }
 
                         template <bool WrapHorizontal>
@@ -170,14 +198,16 @@ namespace cv
                         void compute(InputArray _image, KeyPoints &_keypoints, OutputArray _descriptors) override
                         {
                                 const std::variant<_InputArray, KeyPoints> keypoints = _keypoints;
+                                const SphericalLensParams scaledLens = scaleLensForImage(lensParams_, _image.size(), lensBaseSize_);
                                 computeDescriptors<true>(_image, keypoints, _descriptors, Stream::Null(), scaleFactor_, buffers_,
-                                        lensParams_);
+                                        scaledLens);
                         }
 
                         void computeAsync(InputArray _image, InputArray _keypoints, OutputArray _descriptors, Stream &stream) override
                         {
                                 const std::variant<_InputArray, KeyPoints> keypoints = _keypoints;
-                                computeDescriptors<true>(_image, keypoints, _descriptors, stream, scaleFactor_, buffers_, lensParams_);
+                                const SphericalLensParams scaledLens = scaleLensForImage(lensParams_, _image.size(), lensBaseSize_);
+                                computeDescriptors<true>(_image, keypoints, _descriptors, stream, scaleFactor_, buffers_, scaledLens);
                         }
 
                         int descriptorSize() const override { return PARAM_SIZE / 8; }
@@ -187,6 +217,7 @@ namespace cv
                 private:
                         float scaleFactor_;
                         SphericalLensParams lensParams_;
+                        Size lensBaseSize_;
                         ORBBuffers buffers_;
                 };
 

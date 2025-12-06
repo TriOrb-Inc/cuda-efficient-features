@@ -1,0 +1,80 @@
+/*
+Copyright 2024 TriOrb Inc.
+
+The major design pattern of this plugin was abstracted
+from Fixstars Corporation, which is subject to the same license.
+Here is the original copyright notice:
+
+Copyright 2023 Fixstars Corporation
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+http ://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
+#include "cuda_efficient_descriptors.h"
+#include "cuda_efficient_features.h"
+
+#include <opencv2/core/cuda_stream_accessor.hpp>
+
+namespace cv
+{
+namespace cuda
+{
+namespace akaze_internal
+{
+        std::vector<KeyPoint> downloadKeypointsScaled(InputArray keypoints, float scaleFactor, Stream& stream)
+        {
+                std::vector<KeyPoint> out;
+                if (keypoints.empty())
+                        return out;
+
+                Mat host;
+                switch (keypoints.kind())
+                {
+                case _InputArray::KindFlag::MAT:
+                        host = keypoints.getMat();
+                        break;
+                case _InputArray::KindFlag::CUDA_GPU_MAT:
+                        keypoints.getGpuMat().download(host, stream);
+                        break;
+                default:
+                        return out;
+                }
+
+                if (host.empty())
+                        return out;
+
+                const Vec2s* points = host.ptr<Vec2s>(EfficientFeatures::LOCATION_ROW);
+                const float* responses = host.ptr<float>(EfficientFeatures::RESPONSE_ROW);
+                const float* angles = host.ptr<float>(EfficientFeatures::ANGLE_ROW);
+                const int* octaves = host.ptr<int>(EfficientFeatures::OCTAVE_ROW);
+                const float* sizes = host.ptr<float>(EfficientFeatures::SIZE_ROW);
+
+                const int nkeypoints = host.cols;
+                out.resize(nkeypoints);
+                for (int i = 0; i < nkeypoints; i++)
+                {
+                        KeyPoint kpt;
+                        kpt.pt = Point2f(points[i][0], points[i][1]);
+                        kpt.response = responses[i];
+                        kpt.angle = angles[i];
+                        kpt.octave = octaves[i];
+                        kpt.size = sizes[i] * scaleFactor;
+                        out[i] = kpt;
+                }
+
+                return out;
+        }
+} // namespace akaze_internal
+} // namespace cuda
+} // namespace cv
+

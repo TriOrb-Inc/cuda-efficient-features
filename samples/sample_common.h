@@ -22,6 +22,7 @@ limitations under the License.
 
 enum { BAD,
        HashSIFT,
+       AKAZE,
        ORB,
        SphericalORB };
 

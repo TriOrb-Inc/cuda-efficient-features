@@ -225,9 +225,9 @@ public:
 #include "hash_sift.p512.h"
 #include "hash_sift.p256.h"
 
-                if (nbits == SIZE_512_BITS)
+                if (nbits == HashSIFT::SIZE_512_BITS)
                         Mat(512, 129, CV_64F, (void*)HASH_SIFT_512_VALS).convertTo(bMatrix_, CV_32F);
-                else if (nbits == SIZE_256_BITS)
+                else if (nbits == HashSIFT::SIZE_256_BITS)
                         Mat(256, 129, CV_64F, (void*)HASH_SIFT_256_VALS).convertTo(bMatrix_, CV_32F);
                 else
                         CV_Error(Error::StsBadArg, "n_bits should be either SIZE_512_BITS or SIZE_256_BITS");
@@ -266,8 +266,7 @@ public:
                 getOutputMat(_descriptors, descriptors_, keypoints_.rows, descriptorSize(), descriptorType());
 
                 GpuMat responses = bufResponses_.createMat(keypoints_.rows, 129, CV_32F);
-                gpu::computePatchSIFTs(image_, keypoints_, responses, croppingScale_, 1./6, 1.6, StreamAccessor::getStream(strea
-m));
+                gpu::computePatchSIFTs(image_, keypoints_, responses, croppingScale_, 1./6, 1.6, StreamAccessor::getStream(stream));
                 matmulAndSign_(responses, d_bMatrix_, descriptors_, stream);
 
                 if (_descriptors.kind() == _InputArray::KindFlag::MAT)

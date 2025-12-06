@@ -24,6 +24,18 @@ namespace cv
 namespace cuda
 {
 
+struct SphericalLensParams
+{
+        float fx = 0.f;
+        float fy = 0.f;
+        float cx = 0.f;
+        float cy = 0.f;
+        float k1 = 0.f;
+        float k2 = 0.f;
+        float k3 = 0.f;
+        float k4 = 0.f;
+};
+
 class EfficientDescriptorsAsync
 {
 public:
@@ -167,16 +179,21 @@ public:
         static Ptr<AKAZE> create(float scaleFactor, int descriptorBits = 256);
 };
 
-struct SphericalLensParams
+class SphericalAKAZE : public EfficientDescriptorsAsync
 {
-        float fx = 0.f;
-        float fy = 0.f;
-        float cx = 0.f;
-        float cy = 0.f;
-        float k1 = 0.f;
-        float k2 = 0.f;
-        float k3 = 0.f;
-        float k4 = 0.f;
+public:
+        /** @brief Creates the Spherical AKAZE descriptor with MLDB (binary) output and horizontal wrapping.
+        @param scaleFactor Adjust the sampling window around detected keypoints:
+        - <b> 1.00f </b> should be the scale for ORB keypoints
+        - <b> 6.75f </b> should be the scale for SIFT detected keypoints
+        - <b> 6.25f </b> is default and fits for KAZE, SURF detected keypoints
+        - <b> 5.00f </b> should be the scale for AKAZE, MSD, AGAST, FAST, BRISK keypoints
+        @param descriptorBits Desired descriptor length in bits. Supported values are 256 or 512.
+        @param lensParams Lens parameters for spherical projection. If fx/fy are 0, the implementation
+        falls back to an equirectangular assumption derived from the input image size.
+         */
+        static Ptr<SphericalAKAZE> create(float scaleFactor, int descriptorBits = 256,
+                SphericalLensParams lensParams = {});
 };
 
 class EORB : public EfficientDescriptorsAsync

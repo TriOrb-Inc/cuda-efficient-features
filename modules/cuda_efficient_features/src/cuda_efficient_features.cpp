@@ -86,6 +86,12 @@ static Ptr<EfficientDescriptorsAsync> createDescriber(EfficientFeatures::Descrip
         case EfficientFeatures::AKAZE_512:
                 return cuda::AKAZE::create(1, 512);
                 break;
+        case EfficientFeatures::SPHERICAL_AKAZE_256:
+                return cuda::SphericalAKAZE::create(1, 256);
+                break;
+        case EfficientFeatures::SPHERICAL_AKAZE_512:
+                return cuda::SphericalAKAZE::create(1, 512);
+                break;
         case EfficientFeatures::ORB:
                 return cuda::EORB::create(1);
                 break;

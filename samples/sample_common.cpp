@@ -18,12 +18,15 @@ limitations under the License.
 
 #include <iostream>
 
+
 #include <opencv2/imgproc.hpp>
 #include <opencv2/highgui.hpp>
 
 cv::cuda::EfficientFeatures::DescriptorType getDescriptorType(int descType, int descBits)
 {
         using namespace cv::cuda;
+
+        descType = sanitizeDescriptorType(descType);
 
         if (descType == BAD)
                 return descBits == 256 ? EfficientFeatures::BAD_256 : EfficientFeatures::BAD_512;
@@ -41,6 +44,9 @@ cv::cuda::EfficientFeatures::DescriptorType getDescriptorType(int descType, int 
         if (descType == AKAZE)
                 return descBits == 256 ? EfficientFeatures::AKAZE_256 : EfficientFeatures::AKAZE_512;
 
+        if (descType == SphericalAKAZE)
+                return descBits == 256 ? EfficientFeatures::SPHERICAL_AKAZE_256 : EfficientFeatures::SPHERICAL_AKAZE_512;
+
         if (descType == ORB)
                 return EfficientFeatures::ORB;
 
@@ -52,6 +58,8 @@ cv::cuda::EfficientFeatures::DescriptorType getDescriptorType(int descType, int 
 
 int normalizeDescriptorBits(int descType, int descBits)
 {
+        descType = sanitizeDescriptorType(descType);
+
         const int sanitized = descBits == 512 ? 512 : 256;
 
         if ((descType == ORB || descType == SphericalORB) && sanitized == 512)
@@ -61,6 +69,25 @@ int normalizeDescriptorBits(int descType, int descBits)
         }
 
         return sanitized;
+}
+
+int sanitizeDescriptorType(int descType)
+{
+        if (descType < BAD || descType > SphericalORB)
+        {
+                std::cerr << "descriptor-type must be between 0 and 7. Fallback to BAD." << std::endl;
+                return BAD;
+        }
+
+        return descType;
+}
+
+const char* descriptorTypeName(int descType)
+{
+        static const char* descStr[] = { "BAD", "HashSIFT", "SphericalBAD", "SphericalHashSIFT", "AKAZE", "SphericalAKAZE", "ORB",
+                "SphericalORB" };
+
+        return descStr[sanitizeDescriptorType(descType)];
 }
 
 void convertToGray(const cv::Mat& src, cv::Mat& dst)

@@ -118,7 +118,7 @@ Use the `--help` or `-h` option for detailed information.
 
 ### ORB / Spherical ORB の使用例
 #### ORB (CUDA 実装)
-`cv::cuda::EfficientFeatures` でキーポイント検出を行い、`cv::cuda::EORB` で ORB 記述子を生成します。`EORB` は記述子計算専用のクラスで、`compute` / `computeAsync` を提供します。
+`cv::cuda::EfficientFeatures` でキーポイント検出を行い、`cv::cuda::EORB` で ORB 記述子を生成します。`EORB` は記述子計算専用のクラスで、`compute` / `computeAsync` を提供します。キーポイント検出は含まれないため `detect*` / `detectAndCompute*` は持たず、ファクトリ関数はスケールファクタのみを引数に取ります。
 
 ```cpp
 #include <cuda_efficient_features.h>
@@ -148,7 +148,7 @@ stream.waitForCompletion();
 ```
 
 #### Spherical ORB (CUDA 実装)
-全方位画像など水平方向がループする画像に対して、レンズパラメータ（`fx, fy, cx, cy, k1, k2, k3, k4`）を渡して球面投影を行いながら記述子を生成できます。キーポイント検出は通常の `EfficientFeatures` などで行い、`cv::cuda::SphericalORB` で記述子を計算します。
+全方位画像など水平方向がループする画像に対して、レンズパラメータ（`fx, fy, cx, cy, k1, k2, k3, k4`）を渡して球面投影を行いながら記述子を生成できます。キーポイント検出は通常の `EfficientFeatures` などで行い、`cv::cuda::SphericalORB` で記述子を計算します。こちらも記述子計算専用のため、検出系 API は提供されません。
 
 ```cpp
 #include <cuda_efficient_features.h>
@@ -177,7 +177,7 @@ sphorb->compute(image_gpu, keypoints, descriptors_gpu);
 
 ### AKAZE の使用例
 #### AKAZE (CUDA 実装)
-`cv::cuda::AKAZE` を利用すると、MLDB 形式の AKAZE 記述子を GPU 上で計算できます。`descriptorBits` に 256 または 512 を指定します。
+`cv::cuda::AKAZE` を利用すると、MLDB 形式の AKAZE 記述子を GPU 上で計算できます。`descriptorBits` に 256 または 512 を指定します。こちらも記述子計算の `compute` / `computeAsync` を提供するクラスで、キーポイント検出は別途実施します。
 
 ```cpp
 #include <cuda_efficient_features.h>

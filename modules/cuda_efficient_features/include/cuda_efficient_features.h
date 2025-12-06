@@ -48,6 +48,8 @@ public:
                 SPHERICAL_HASH_SIFT_512,
                 AKAZE_256,
                 AKAZE_512,
+                SPHERICAL_AKAZE_256,
+                SPHERICAL_AKAZE_512,
                 ORB,
                 SPHERICAL_ORB,
         };

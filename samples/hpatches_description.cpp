@@ -31,7 +31,7 @@ limitations under the License.
 static std::string keys =
 "{ @hpatchs-dir     |   <none> | path to hpatches-release.                   }"
 "{ result-dir       | ./result | path to result.                             }"
-"{ descriptor-type  |        0 | descriptor type(0:BAD 1:HashSIFT 2:AKAZE 3:ORB 4:SphericalORB). }"
+"{ descriptor-type  |        0 | descriptor type(0:BAD 1:HashSIFT 2:SphericalBAD 3:SphericalHashSIFT 4:AKAZE 5:SphericalAKAZE 6:ORB 7:SphericalORB). }"
 "{ descriptor-bits  |      256 | descriptor bits(256 or 512).                }"
 "{ compute-angle    |          | compute angles of keypoints.                }"
 "{ help  h          |          | print help message.                         }";
@@ -172,7 +172,7 @@ int main(int argc, char* argv[])
 
 	const auto hpatchesDir = parser.get<std::string>("@hpatchs-dir");
 	const auto resultDir = parser.get<std::string>("result-dir");
-	const int descType = parser.get<int>("descriptor-type");
+    const int descType = sanitizeDescriptorType(parser.get<int>("descriptor-type"));
     const int descBits = normalizeDescriptorBits(descType, parser.get<int>("descriptor-bits"));
 	const bool computeAngle = parser.has("compute-angle");
 
@@ -183,12 +183,12 @@ int main(int argc, char* argv[])
 		std::exit(EXIT_FAILURE);
 	}
 
-    const char* descStr[] = { "BAD", "HashSIFT", "AKAZE", "ORB", "SphericalORB" };
+    const char* descStr[] = { "BAD", "HashSIFT", "SphericalBAD", "SphericalHashSIFT", "AKAZE", "SphericalAKAZE", "ORB", "SphericalORB" };
 
 	std::cout << "=== configulations ===" << std::endl;
 	std::cout << "HPatchs directory : " << hpatchesDir << std::endl;
 	std::cout << "result directory  : " << resultDir << std::endl;
-	std::cout << "descriptor type   : " << descStr[descType] << std::endl;
+    std::cout << "descriptor type   : " << descStr[descType] << std::endl;
 	std::cout << "descriptor bits   : " << descBits << std::endl;
 	std::cout << "compute angle     : " << (computeAngle ? "Yes" : "No") << std::endl;
 	std::cout << std::endl;

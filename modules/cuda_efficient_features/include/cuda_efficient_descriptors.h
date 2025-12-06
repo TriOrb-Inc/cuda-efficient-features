@@ -117,7 +117,15 @@ public:
 	@param nbits Determine the number of bits in the descriptor. Should be either
 	HashSIFT::SIZE_512_BITS or HashSIFT::SIZE_256_BITS.
 	 */
-	static Ptr<HashSIFT> create(float croppingScale, int nbits = SIZE_256_BITS);
+        static Ptr<HashSIFT> create(float croppingScale, int nbits = SIZE_256_BITS);
+};
+
+struct SphericalLensParams
+{
+        float fx = 0.f;
+        float fy = 0.f;
+        float cx = 0.f;
+        float cy = 0.f;
 };
 
 class EORB : public EfficientDescriptorsAsync
@@ -142,8 +150,10 @@ public:
         - <b> 6.75f </b> should be the scale for SIFT detected keypoints
         - <b> 6.25f </b> is default and fits for KAZE, SURF detected keypoints
         - <b> 5.00f </b> should be the scale for AKAZE, MSD, AGAST, FAST, BRISK keypoints
+        @param lensParams Lens parameters for spherical projection. If fx/fy are 0, the implementation
+        falls back to an equirectangular assumption derived from the input image size.
          */
-        static Ptr<SphericalORB> create(float scale_factor);
+        static Ptr<SphericalORB> create(float scale_factor, SphericalLensParams lensParams = {});
 };
 
 } // namespace cuda

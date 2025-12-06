@@ -40,6 +40,8 @@ namespace gpu
 {
 
 static constexpr float CV_DEGREES_TO_RADS = 0.017453292519943295f;
+static constexpr float CV_PI_F = 3.14159265358979323846f;
+static constexpr float CV_2PI_F = 6.2831853071795864769f;
 
 static __device__ inline float getPixel(const int *integral, int integralStep, int width, int height, int x, int y, bool wrapHorizontal)
 {
@@ -103,6 +105,30 @@ static __device__ inline void generatePattern(int idx, float halfPatch, float &x
         y2 = sinf(t2) * halfPatch * 0.9f;
 }
 
+__global__ void normalizeSphericalKeypointsKernel(float4 *keypoints, int nkeypoints, int width, int height,
+        SphericalLensParams lens)
+{
+        const int idx = static_cast<int>(blockIdx.x * blockDim.x + threadIdx.x);
+        if (idx >= nkeypoints)
+                return;
+
+        float4 kp = keypoints[idx];
+
+        const float theta = (kp.x - lens.cx) / lens.fx;
+        const float phi = (kp.y - lens.cy) / lens.fy;
+
+        float wrappedTheta = fmodf(theta, CV_2PI_F);
+        if (wrappedTheta < 0.f)
+                wrappedTheta += CV_2PI_F;
+
+        const float clampedPhi = fminf(CV_PI_F * 0.5f, fmaxf(-CV_PI_F * 0.5f, phi));
+
+        kp.x = wrappedTheta * static_cast<float>(width) / CV_2PI_F;
+        kp.y = (clampedPhi + (CV_PI_F * 0.5f)) * static_cast<float>(height) / CV_PI_F;
+
+        keypoints[idx] = kp;
+}
+
 __global__ void computeORBKernel(const int *integral, int integralStep, int width, int height, const float4 *keypoints,
         int nkeypoints, unsigned char *descriptors, int descriptorStep, float scaleFactor, int patternSize, int patchSize,
         bool wrapHorizontal)
@@ -157,6 +183,14 @@ void computeORB(const GpuMat &integral, const GpuMat &keypoints, GpuMat &descrip
         computeORBKernel<<<grid, block, 0, stream>>>(integral.ptr<int>(), static_cast<int>(integral.step / sizeof(int)),
                 integral.cols - 1, integral.rows - 1, keypoints.ptr<float4>(), keypoints.rows, descriptors.ptr<unsigned char>(),
                 static_cast<int>(descriptors.step), scaleFactor, paramSize, patchSize.width, wrapHorizontal);
+}
+
+void normalizeSphericalKeypoints(GpuMat &keypoints, Size imageSize, const SphericalLensParams &lensParams, cudaStream_t stream)
+{
+        const dim3 block(256);
+        const dim3 grid((keypoints.rows + block.x - 1) / block.x);
+        normalizeSphericalKeypointsKernel<<<grid, block, 0, stream>>>(keypoints.ptr<float4>(), keypoints.rows, imageSize.width,
+                imageSize.height, lensParams);
 }
 
 void calcIntegralImage(const GpuMat &src, GpuMat &dst, Stream &stream)

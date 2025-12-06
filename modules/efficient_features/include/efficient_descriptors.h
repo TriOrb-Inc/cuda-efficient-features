@@ -86,7 +86,15 @@ public:
 	 * before description.
 	 * @return A pointer to the new cv::Feature2D descriptor object
 	 */
-	CV_WRAP static Ptr<HashSIFT> create(float cropping_scale, int n_bits = SIZE_256_BITS, double sigma = 1.6);
+        CV_WRAP static Ptr<HashSIFT> create(float cropping_scale, int n_bits = SIZE_256_BITS, double sigma = 1.6);
+};
+
+struct SphericalLensParams
+{
+        float fx = 0.f;
+        float fy = 0.f;
+        float cx = 0.f;
+        float cy = 0.f;
 };
 
 class EORB : public Feature2D
@@ -111,8 +119,10 @@ public:
         - <b> 6.75f </b> should be the scale for SIFT detected keypoints
         - <b> 6.25f </b> is default and fits for KAZE, SURF detected keypoints
         - <b> 5.00f </b> should be the scale for AKAZE, MSD, AGAST, FAST, BRISK keypoints
+        @param lens_params Lens parameters for spherical projection. If fx/fy are 0, the implementation
+        falls back to an equirectangular assumption derived from the input image size.
         */
-        CV_WRAP static Ptr<SphericalORB> create(float scale_factor);
+        CV_WRAP static Ptr<SphericalORB> create(float scale_factor, SphericalLensParams lens_params = {});
 };
 
 } // namespace cv

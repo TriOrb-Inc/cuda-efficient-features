@@ -30,6 +30,8 @@ limitations under the License.
 #include <opencv2/features2d.hpp>
 #include <opencv2/imgproc.hpp>
 
+#include <algorithm>
+#include <cmath>
 #include <vector>
 
 namespace cv
@@ -51,6 +53,30 @@ namespace cv
                 {
                         for (auto& kpt : keypoints)
                                 kpt.pt += offset;
+                }
+
+                inline bool hasValidLens(const SphericalLensParams& lens)
+                {
+                        return lens.fx > 0.f && lens.fy > 0.f;
+                }
+
+                inline Point2f toEquirectangular(const Point2f& pt, const Size& imageSize, const SphericalLensParams& lens)
+                {
+                        constexpr float TWO_PI = 6.2831853071795864769f;
+                        constexpr float HALF_PI = 1.5707963267948966192f;
+
+                        const float theta = (pt.x - lens.cx) / lens.fx;
+                        const float phi = (pt.y - lens.cy) / lens.fy;
+
+                        float wrappedTheta = std::fmod(theta, TWO_PI);
+                        if (wrappedTheta < 0.f)
+                                wrappedTheta += TWO_PI;
+
+                        const float clampedPhi = std::max(-HALF_PI, std::min(HALF_PI, phi));
+
+                        const float x = wrappedTheta * static_cast<float>(imageSize.width) / TWO_PI;
+                        const float y = (clampedPhi + HALF_PI) * static_cast<float>(imageSize.height) / (2.f * HALF_PI);
+                        return Point2f(x, y);
                 }
         } // namespace
 
@@ -92,7 +118,8 @@ namespace cv
         class SphericalORB_Impl : public SphericalORB
         {
         public:
-                explicit SphericalORB_Impl(float scale_factor) : scale_factor_(scale_factor)
+                explicit SphericalORB_Impl(float scale_factor, SphericalLensParams lens_params)
+                        : scale_factor_(scale_factor), lens_params_(lens_params)
                 {
                         orb_ = cv::ORB::create(1);
                 }
@@ -117,6 +144,19 @@ namespace cv
 
                         std::vector<KeyPoint> scaled = keypoints;
                         applyScale(scaled, scale_factor_);
+
+                        SphericalLensParams lens = lens_params_;
+                        if (!hasValidLens(lens))
+                        {
+                                lens.fx = static_cast<float>(imageMat.cols) / 6.2831853071795864769f;
+                                lens.fy = static_cast<float>(imageMat.rows) / 3.14159265358979323846f;
+                                lens.cx = 0.f;
+                                lens.cy = static_cast<float>(imageMat.rows) * 0.5f;
+                        }
+
+                        for (auto& kpt : scaled)
+                                kpt.pt = toEquirectangular(kpt.pt, imageMat.size(), lens);
+
                         shiftKeypoints(scaled, Point2f(static_cast<float>(HALF_PATCH), static_cast<float>(HALF_PATCH)));
 
                         orb_->compute(padded, scaled, descriptors);
@@ -128,6 +168,7 @@ namespace cv
 
         private:
                 float scale_factor_;
+                SphericalLensParams lens_params_;
                 Ptr<cv::ORB> orb_;
         };
 
@@ -136,8 +177,8 @@ namespace cv
                 return makePtr<EORB_Impl>(scale_factor);
         }
 
-        Ptr<SphericalORB> SphericalORB::create(float scale_factor)
+        Ptr<SphericalORB> SphericalORB::create(float scale_factor, SphericalLensParams lens_params)
         {
-                return makePtr<SphericalORB_Impl>(scale_factor);
+                return makePtr<SphericalORB_Impl>(scale_factor, lens_params);
         }
 } // namespace cv

@@ -33,6 +33,7 @@ limitations under the License.
 #include <opencv2/cudawarping.hpp>
 #include <opencv2/core/cuda_stream_accessor.hpp>
 
+#include <cmath>
 #include <vector>
 
 #include "cuda_efficient_features_internal.h"
@@ -57,9 +58,28 @@ namespace cv
                                 GpuMat descriptors;
                         };
 
+                        inline bool hasValidLens(const SphericalLensParams &lens)
+                        {
+                                return lens.fx > 0.f && lens.fy > 0.f;
+                        }
+
+                        inline SphericalLensParams resolveLens(const SphericalLensParams &lens, const Size &imageSize)
+                        {
+                                if (hasValidLens(lens))
+                                        return lens;
+
+                                SphericalLensParams fallback;
+                                fallback.fx = static_cast<float>(imageSize.width) / 6.2831853071795864769f;
+                                fallback.fy = static_cast<float>(imageSize.height) / 3.14159265358979323846f;
+                                fallback.cx = 0.f;
+                                fallback.cy = static_cast<float>(imageSize.height) * 0.5f;
+                                return fallback;
+                        }
+
                         template <bool WrapHorizontal>
                         void computeDescriptors(InputArray _image, const std::variant<_InputArray, KeyPoints> &_keypoints,
-                                OutputArray _descriptors, Stream &stream, float scaleFactor, ORBBuffers &buffers)
+                                OutputArray _descriptors, Stream &stream, float scaleFactor, ORBBuffers &buffers,
+                                const SphericalLensParams &lens)
                         {
                                 if (_image.empty())
                                         return;
@@ -71,6 +91,9 @@ namespace cv
                                 }
 
                                 CV_Assert(_image.type() == CV_8U);
+
+                                const Size imageSize = _image.size();
+                                const SphericalLensParams resolvedLens = resolveLens(lens, imageSize);
 
                                 getInputMat(_image, buffers.image, stream);
 
@@ -90,6 +113,8 @@ namespace cv
 
                                 if constexpr (WrapHorizontal)
                                 {
+                                        gpu::normalizeSphericalKeypoints(buffers.keypoints, imageSize, resolvedLens,
+                                                StreamAccessor::getStream(stream));
                                         cv::cuda::add(buffers.keypoints, Scalar(HALF_PATCH, HALF_PATCH, 0, 0), buffers.keypoints,
                                                 noArray(), -1, stream);
                                 }
@@ -112,13 +137,15 @@ namespace cv
                         void compute(InputArray _image, KeyPoints &_keypoints, OutputArray _descriptors) override
                         {
                                 const std::variant<_InputArray, KeyPoints> keypoints = _keypoints;
-                                computeDescriptors<false>(_image, keypoints, _descriptors, Stream::Null(), scaleFactor_, buffers_);
+                                computeDescriptors<false>(_image, keypoints, _descriptors, Stream::Null(), scaleFactor_, buffers_,
+                                        SphericalLensParams{});
                         }
 
                         void computeAsync(InputArray _image, InputArray _keypoints, OutputArray _descriptors, Stream &stream) override
                         {
                                 const std::variant<_InputArray, KeyPoints> keypoints = _keypoints;
-                                computeDescriptors<false>(_image, keypoints, _descriptors, stream, scaleFactor_, buffers_);
+                                computeDescriptors<false>(_image, keypoints, _descriptors, stream, scaleFactor_, buffers_,
+                                        SphericalLensParams{});
                         }
 
                         int descriptorSize() const override { return PARAM_SIZE / 8; }
@@ -133,18 +160,20 @@ namespace cv
                 class SphericalORB_Impl : public SphericalORB
                 {
                 public:
-                        explicit SphericalORB_Impl(float scaleFactor) : scaleFactor_(scaleFactor) {}
+                        explicit SphericalORB_Impl(float scaleFactor, SphericalLensParams lensParams)
+                                : scaleFactor_(scaleFactor), lensParams_(lensParams) {}
 
                         void compute(InputArray _image, KeyPoints &_keypoints, OutputArray _descriptors) override
                         {
                                 const std::variant<_InputArray, KeyPoints> keypoints = _keypoints;
-                                computeDescriptors<true>(_image, keypoints, _descriptors, Stream::Null(), scaleFactor_, buffers_);
+                                computeDescriptors<true>(_image, keypoints, _descriptors, Stream::Null(), scaleFactor_, buffers_,
+                                        lensParams_);
                         }
 
                         void computeAsync(InputArray _image, InputArray _keypoints, OutputArray _descriptors, Stream &stream) override
                         {
                                 const std::variant<_InputArray, KeyPoints> keypoints = _keypoints;
-                                computeDescriptors<true>(_image, keypoints, _descriptors, stream, scaleFactor_, buffers_);
+                                computeDescriptors<true>(_image, keypoints, _descriptors, stream, scaleFactor_, buffers_, lensParams_);
                         }
 
                         int descriptorSize() const override { return PARAM_SIZE / 8; }
@@ -153,6 +182,7 @@ namespace cv
 
                 private:
                         float scaleFactor_;
+                        SphericalLensParams lensParams_;
                         ORBBuffers buffers_;
                 };
 
@@ -161,9 +191,9 @@ namespace cv
                         return makePtr<EORB_Impl>(scaleFactor);
                 }
 
-                Ptr<SphericalORB> SphericalORB::create(float scaleFactor)
+                Ptr<SphericalORB> SphericalORB::create(float scaleFactor, SphericalLensParams lensParams)
                 {
-                        return makePtr<SphericalORB_Impl>(scaleFactor);
+                        return makePtr<SphericalORB_Impl>(scaleFactor, lensParams);
                 }
 
         } // namespace cuda

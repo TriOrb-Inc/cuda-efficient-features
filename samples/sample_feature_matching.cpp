@@ -166,11 +166,11 @@ int main(int argc, char* argv[])
                 }
         };
 
-        feature->detect(gray1, cv::noArray(), keypoints1);
+        feature->detect(gray1, keypoints1, cv::noArray());
         assignClassIdIfNeeded(keypoints1);
         feature->compute(gray1, keypoints1, descriptors1);
 
-        feature->detect(gray2, cv::noArray(), keypoints2);
+        feature->detect(gray2, keypoints2, cv::noArray());
         assignClassIdIfNeeded(keypoints2);
         feature->compute(gray2, keypoints2, descriptors2);
 

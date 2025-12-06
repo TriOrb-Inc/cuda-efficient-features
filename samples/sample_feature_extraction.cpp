@@ -14,6 +14,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
+#include <cstdlib>
 #include <iostream>
 
 #include <opencv2/core.hpp>
@@ -33,6 +34,7 @@ static std::string keys =
 "{ descriptor-type |      0 | descriptor type(0:BAD 1:HashSIFT 2:SphericalBAD 3:SphericalHashSIFT 4:AKAZE 5:SphericalAKAZE 6:ORB 7:SphericalORB). }"
 "{ descriptor-bits |    256 | descriptor bits(256 or 512).                }"
 "{ compute-async   |        | compute asynchronously.                     }"
+"{ no-gui          |        | disable GUI rendering (useful in headless environments). }"
 "{ help  h         |        | print help message.                         }";
 
 int main(int argc, char* argv[])
@@ -50,10 +52,11 @@ int main(int argc, char* argv[])
                 : parser.get<std::string>("@input-image");
 	const int nfeatures = parser.get<int>("max-keypoints");
 	const int fastThreshold = parser.get<int>("fast-threshold");
-	const int nonmaxRadius = parser.get<int>("nonmax-radius");
+        const int nonmaxRadius = parser.get<int>("nonmax-radius");
         const int descType = sanitizeDescriptorType(parser.get<int>("descriptor-type"));
         const int descBits = normalizeDescriptorBits(descType, parser.get<int>("descriptor-bits"));
-	const bool computeAsync = parser.has("compute-async");
+        const bool computeAsync = parser.has("compute-async");
+        const bool noGui = parser.has("no-gui");
 
         if (!parser.check())
         {
@@ -114,11 +117,21 @@ int main(int argc, char* argv[])
 
 	std::cout << keypoints.size() << " keypoints found." << std::endl << std::endl;
 
-	// draw
-	cv::Mat draw;
-	drawKeypoints(image, keypoints, draw);
-	cv::imshow("keypoints", draw);
-	cv::waitKey(0);
+        // draw
+        if (noGui || std::getenv("DISPLAY") == nullptr)
+        {
+                if (!noGui)
+                {
+                        std::cerr << "DISPLAY is not set; skipping GUI rendering. Use --no-gui to silence this message." << std::endl;
+                }
+        }
+        else
+        {
+                cv::Mat draw;
+                drawKeypoints(image, keypoints, draw);
+                cv::imshow("keypoints", draw);
+                cv::waitKey(0);
+        }
 
 	return 0;
 }

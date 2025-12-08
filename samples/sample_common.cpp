@@ -28,29 +28,29 @@ cv::cuda::EfficientFeatures::DescriptorType getDescriptorType(int descType, int 
 
         descType = sanitizeDescriptorType(descType);
 
-        if (descType == BAD)
+        if (descType == SampleDescriptorType::BAD)
                 return descBits == 256 ? EfficientFeatures::BAD_256 : EfficientFeatures::BAD_512;
 
-        if (descType == HashSIFT)
+        if (descType == SampleDescriptorType::HashSIFT)
                 return descBits == 256 ? EfficientFeatures::HASH_SIFT_256 : EfficientFeatures::HASH_SIFT_512;
 
-        if (descType == SphericalBAD)
+        if (descType == SampleDescriptorType::SphericalBAD)
                 return descBits == 256 ? EfficientFeatures::SPHERICAL_BAD_256 : EfficientFeatures::SPHERICAL_BAD_512;
 
-        if (descType == SphericalHashSIFT)
+        if (descType == SampleDescriptorType::SphericalHashSIFT)
                 return descBits == 256 ? EfficientFeatures::SPHERICAL_HASH_SIFT_256
                                        : EfficientFeatures::SPHERICAL_HASH_SIFT_512;
 
-        if (descType == AKAZE)
+        if (descType == SampleDescriptorType::AKAZE)
                 return descBits == 256 ? EfficientFeatures::AKAZE_256 : EfficientFeatures::AKAZE_512;
 
-        if (descType == SphericalAKAZE)
+        if (descType == SampleDescriptorType::SphericalAKAZE)
                 return descBits == 256 ? EfficientFeatures::SPHERICAL_AKAZE_256 : EfficientFeatures::SPHERICAL_AKAZE_512;
 
-        if (descType == ORB)
+        if (descType == SampleDescriptorType::ORB)
                 return EfficientFeatures::ORB;
 
-        if (descType == SphericalORB)
+        if (descType == SampleDescriptorType::SphericalORB)
                 return EfficientFeatures::SPHERICAL_ORB;
 
         return EfficientFeatures::HASH_SIFT_256;
@@ -62,7 +62,7 @@ int normalizeDescriptorBits(int descType, int descBits)
 
         const int sanitized = descBits == 512 ? 512 : 256;
 
-        if ((descType == ORB || descType == SphericalORB) && sanitized == 512)
+        if ((descType == SampleDescriptorType::ORB || descType == SampleDescriptorType::SphericalORB) && sanitized == 512)
         {
                 std::cerr << "descriptor-bits=512 is not supported for ORB/SphericalORB. Fallback to 256 bits." << std::endl;
                 return 256;
@@ -73,10 +73,10 @@ int normalizeDescriptorBits(int descType, int descBits)
 
 int sanitizeDescriptorType(int descType)
 {
-        if (descType < BAD || descType > SphericalORB)
+        if (descType < SampleDescriptorType::BAD || descType > SampleDescriptorType::SphericalORB)
         {
                 std::cerr << "descriptor-type must be between 0 and 7. Fallback to BAD." << std::endl;
-                return BAD;
+                return SampleDescriptorType::BAD;
         }
 
         return descType;

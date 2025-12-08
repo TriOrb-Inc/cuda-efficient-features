@@ -61,9 +61,7 @@ def test_sample_feature_matching_runs(sample_feature_matching_binary, tmp_path, 
     if not image1 or not image2:
         pytest.skip("必要な入力画像が見つかりません。submodule もしくは images/input を確認してください。")
 
-    lens_params = None
-    if desc_type in {2, 3, 5, 7}:
-        lens_params = _load_lens_params(image1.parent)
+    lens_params = _load_lens_params(image1.parent)
 
     cmd = [
         str(sample_feature_matching_binary),
@@ -75,6 +73,7 @@ def test_sample_feature_matching_runs(sample_feature_matching_binary, tmp_path, 
     ]
 
     if lens_params:
+        #print(f"Using lens parameters: {lens_params}")
         for key, value in lens_params.items():
             cmd.append(f"--{key}={value}")
 
@@ -86,3 +85,5 @@ def test_sample_feature_matching_runs(sample_feature_matching_binary, tmp_path, 
         f"stdout:\n{result.stdout}\n"
         f"stderr:\n{result.stderr}\n"
     )
+
+    print(f"sample_feature_matching 実行成功:\nstdout:\n{result.stdout}")

@@ -239,7 +239,7 @@ int main(int argc, char* argv[])
         cv::Mat draw;
         drawMatches(image1, keypoints1, image2, keypoints2, matches, draw);
 
-        const auto makeOutputPath = [](const std::string& lhs, const std::string& rhs) {
+        const auto makeOutputPath = [&](const std::string& lhs, const std::string& rhs) {
                 const auto basename = [](const std::string& path) {
                         const auto pos = path.find_last_of("/\\");
                         return (pos == std::string::npos) ? path : path.substr(pos + 1);
@@ -252,7 +252,8 @@ int main(int argc, char* argv[])
 
                 const auto lhsStem = stem(basename(lhs));
                 const auto rhsStem = stem(basename(rhs));
-                return lhsStem + "_vs_" + rhsStem + "_matches.png";
+                const auto prefix = std::string(descriptorTypeName(descType)) + std::to_string(descBits) + "_";
+                return prefix + lhsStem + "_vs_" + rhsStem + "_matches.jpg";
         };
 
         if (noGui || std::getenv("DISPLAY") == nullptr)

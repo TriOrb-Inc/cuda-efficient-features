@@ -15,6 +15,7 @@ limitations under the License.
 */
 
 #include <algorithm>
+#include <array>
 #include <cstdlib>
 #include <filesystem>
 #include <iostream>
@@ -216,6 +217,25 @@ int main(int argc, char* argv[])
                         pts2.emplace_back(keypoints2[match.trainIdx].pt);
                 }
 
+                const auto countGridCoverage = [&](const std::vector<unsigned char>& mask) {
+                        constexpr int gridCols = 4;
+                        constexpr int gridRows = 4;
+                        std::array<bool, gridCols * gridRows> occupied{};
+
+                        for (size_t i = 0; i < mask.size(); ++i)
+                        {
+                                if (!mask[i])
+                                        continue;
+
+                                const auto& pt = pts1[i];
+                                const int col = std::clamp(static_cast<int>(pt.x * gridCols / image1.cols), 0, gridCols - 1);
+                                const int row = std::clamp(static_cast<int>(pt.y * gridRows / image1.rows), 0, gridRows - 1);
+                                occupied[row * gridCols + col] = true;
+                        }
+
+                        return static_cast<size_t>(std::count(occupied.begin(), occupied.end(), true));
+                };
+
                 auto runRansac = [&](double reprojectionThreshold) {
                         std::vector<unsigned char> inliersMask;
                         const cv::Mat H = cv::findHomography(
@@ -224,7 +244,7 @@ int main(int argc, char* argv[])
                 };
 
                 std::vector<unsigned char> bestMask;
-                size_t bestInliers = 0;
+                double bestScore = -1.0;
 
                 for (const double reproj : {3.0, 5.0, 8.0})
                 {
@@ -233,9 +253,11 @@ int main(int argc, char* argv[])
                                 continue;
 
                         const auto inliers = std::count(inliersMask.begin(), inliersMask.end(), 1);
-                        if (inliers > bestInliers)
+                        const auto coverage = countGridCoverage(inliersMask);
+                        const double score = static_cast<double>(inliers) + 1.0 * static_cast<double>(coverage);
+                        if (score > bestScore)
                         {
-                                bestInliers = static_cast<size_t>(inliers);
+                                bestScore = score;
                                 bestMask = std::move(inliersMask);
                         }
                 }

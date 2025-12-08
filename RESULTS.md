@@ -1,16 +1,17 @@
 # Matches
-## 1707121165.511_cam0 vs 1707121169.811_cam0
+
+## ./images/input/sample01/left.jpg vs right.jpg
 |Feature Type|Image|
 |:--:|:--:|
-|ORB|![ORB_1707121165.511_cam0_vs_1707121169.811_cam0_matches.jpg](./images/output/ORB_1707121165.511_cam0_vs_1707121169.811_cam0_matches.jpg)|
-|Spherical ORB|![SphericalORB_1707121165.511_cam0_vs_1707121169.811_cam0_matches.jpg](./images/output/SphericalORB_1707121165.511_cam0_vs_1707121169.811_cam0_matches.jpg)|
-|AKAZE|![AKAZE_1707121165.511_cam0_vs_1707121169.811_cam0_matches.jpg](./images/output/AKAZE_1707121165.511_cam0_vs_1707121169.811_cam0_matches.jpg)|
-|Spherical AKAZE|![ SphericalAKAZE_1707121165.511_cam0_vs_1707121169.811_cam0_matches.jpg](./images/output/SphericalAKAZE_1707121165.511_cam0_vs_1707121169.811_cam0_matches.jpg)|
-|BAD256|![ BAD256_1707121165.511_cam0_vs_1707121169.811_cam0_matches.jpg](./images/output/BAD256_1707121165.511_cam0_vs_1707121169.811_cam0_matches.jpg)|
-|Spherical BAD256|![ SphericalBAD256_1707121165.511_cam0_vs_1707121169.811_cam0_matches.jpg](./images/output/SphericalBAD256_1707121165.511_cam0_vs_1707121169.811_cam0_matches.jpg)|
-|BAD512|![ BAD512_1707121165.511_cam0_vs_1707121169.811_cam0_matches.jpg](./images/output/BAD512_1707121165.511_cam0_vs_1707121169.811_cam0_matches.jpg)|
-|Spherical BAD512|![ SphericalBAD512_1707121165.511_cam0_vs_1707121169.811_cam0_matches.jpg](./images/output/SphericalBAD512_1707121165.511_cam0_vs_1707121169.811_cam0_matches.jpg)|
-|HashSIFT256|![ HashSIFT256_1707121165.511_cam0_vs_1707121169.811_cam0_matches.jpg](./images/output/HashSIFT256_1707121165.511_cam0_vs_1707121169.811_cam0_matches.jpg)|
-|Spherical HashSIFT256|![ SphericalHashSIFT256_1707121165.511_cam0_vs_1707121169.811_cam0_matches.jpg](./images/output/SphericalHashSIFT256_1707121165.511_cam0_vs_1707121169.811_cam0_matches.jpg)|
-|HashSIFT512|![ HashSIFT512_1707121165.511_cam0_vs_1707121169.811_cam0_matches.jpg](./images/output/HashSIFT512_1707121165.511_cam0_vs_1707121169.811_cam0_matches.jpg)|
-|Spherical HashSIFT512|![ SphericalHashSIFT512_1707121165.511_cam0_vs_1707121169.811_cam0_matches.jpg](./images/output/SphericalHashSIFT512_1707121165.511_cam0_vs_1707121169.811_cam0_matches.jpg)|
+|ORB256|![ORB256](images/output/sample01/ORB256_left_vs_right_matches.jpg)|
+|SphericalORB256|![SphericalORB256](images/output/sample01/SphericalORB256_left_vs_right_matches.jpg)|
+|AKAZE256|![AKAZE256](images/output/sample01/AKAZE256_left_vs_right_matches.jpg)|
+|SphericalAKAZE256|![SphericalAKAZE256](images/output/sample01/SphericalAKAZE256_left_vs_right_matches.jpg)|
+|BAD256|![BAD256](images/output/sample01/BAD256_left_vs_right_matches.jpg)|
+|SphericalBAD256|![SphericalBAD256](images/output/sample01/SphericalBAD256_left_vs_right_matches.jpg)|
+|BAD512|![BAD512](images/output/sample01/BAD512_left_vs_right_matches.jpg)|
+|SphericalBAD512|![SphericalBAD512](images/output/sample01/SphericalBAD512_left_vs_right_matches.jpg)|
+|HashSIFT256|![HashSIFT256](images/output/sample01/HashSIFT256_left_vs_right_matches.jpg)|
+|SphericalHashSIFT256|![SphericalHashSIFT256](images/output/sample01/SphericalHashSIFT256_left_vs_right_matches.jpg)|
+|HashSIFT512|![HashSIFT512](images/output/sample01/HashSIFT512_left_vs_right_matches.jpg)|
+|SphericalHashSIFT512|![SphericalHashSIFT512](images/output/sample01/SphericalHashSIFT512_left_vs_right_matches.jpg)|

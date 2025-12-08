@@ -20,6 +20,8 @@ limitations under the License.
 #include <opencv2/core/cuda.hpp>
 #include <opencv2/features2d.hpp>
 
+#include "cuda_efficient_descriptors.h"
+
 namespace cv
 {
 namespace cuda
@@ -100,11 +102,14 @@ public:
 	virtual void setFastThreshold(int fastThreshold) = 0;
 	virtual int getFastThreshold() const = 0;
 
-	virtual void setNonmaxRadius(int nonmaxRadius) = 0;
-	virtual int getNonmaxRadius() const = 0;
+        virtual void setNonmaxRadius(int nonmaxRadius) = 0;
+        virtual int getNonmaxRadius() const = 0;
 
-	virtual void setDescriptorType(DescriptorType descriptorType) = 0;
-	virtual DescriptorType getDescriptorType() const = 0;
+        virtual void setDescriptorType(DescriptorType descriptorType) = 0;
+        virtual DescriptorType getDescriptorType() const = 0;
+
+        virtual void setSphericalLensParams(const SphericalLensParams& params) = 0;
+        virtual SphericalLensParams getSphericalLensParams() const = 0;
 };
 
 } // namespace cuda

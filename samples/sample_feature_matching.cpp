@@ -29,6 +29,7 @@ limitations under the License.
 #include <opencv2/highgui.hpp>
 
 #include <cuda_efficient_features.h>
+#include <cuda_efficient_descriptors.h>
 
 #include "sample_common.h"
 
@@ -40,6 +41,14 @@ static std::string keys =
 "{ nonmax-radius   |     15 | radius of non-maximum suppression.          }"
 "{ descriptor-type |      0 | descriptor type(0:BAD 1:HashSIFT 2:SphericalBAD 3:SphericalHashSIFT 4:AKAZE 5:SphericalAKAZE 6:ORB 7:SphericalORB). }"
 "{ descriptor-bits |    256 | descriptor bits(256 or 512).                }"
+"{ fx             |      0 | horizontal focal length for spherical descriptors.     }"
+"{ fy             |      0 | vertical focal length for spherical descriptors.       }"
+"{ cx             |      0 | principal point x for spherical descriptors.           }"
+"{ cy             |      0 | principal point y for spherical descriptors.           }"
+"{ k1             |      0 | radial distortion k1 for spherical descriptors.        }"
+"{ k2             |      0 | radial distortion k2 for spherical descriptors.        }"
+"{ k3             |      0 | radial distortion k3 for spherical descriptors.        }"
+"{ k4             |      0 | radial distortion k4 for spherical descriptors.        }"
 "{ no-gui          |        | disable GUI rendering (useful in headless environments). }"
 "{ help  h         |        | print help message.                         }";
 
@@ -278,6 +287,11 @@ int main(int argc, char* argv[])
         const int descBits = normalizeDescriptorBits(descType, parser.get<int>("descriptor-bits"));
         const bool noGui = parser.has("no-gui");
 
+        const cv::cuda::SphericalLensParams lensParams = {
+                parser.get<float>("fx"), parser.get<float>("fy"), parser.get<float>("cx"), parser.get<float>("cy"),
+                parser.get<float>("k1"), parser.get<float>("k2"), parser.get<float>("k3"), parser.get<float>("k4"),
+        };
+
         if (!parser.check())
         {
                 parser.printErrors();
@@ -339,6 +353,7 @@ int main(int argc, char* argv[])
         feature->setFastThreshold(fastThreshold);
         feature->setNonmaxRadius(nonmaxRadius);
         feature->setDescriptorType(getDescriptorType(descType, descBits));
+        feature->setSphericalLensParams(lensParams);
 
         const auto needsClassId = descType == AKAZE || descType == SphericalAKAZE;
         const auto assignClassIdIfNeeded = [&](std::vector<cv::KeyPoint>& keypoints) {

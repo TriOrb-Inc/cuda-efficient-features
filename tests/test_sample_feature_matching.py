@@ -1,3 +1,4 @@
+import json
 import os
 import subprocess
 from pathlib import Path
@@ -41,12 +42,28 @@ def _find_image_pair():
     return None, None
 
 
+def _load_lens_params(base_dir: Path):
+    param_file = base_dir / "param.json"
+    if not param_file.exists():
+        return None
+
+    with param_file.open("r", encoding="utf-8") as f:
+        data = json.load(f)
+
+    keys = ["fx", "fy", "cx", "cy", "k1", "k2", "k3", "k4"]
+    return {key: float(data.get(key, 0)) for key in keys}
+
+
 @pytest.mark.parametrize("desc_type,desc_bits", list(_descriptor_params()))
 def test_sample_feature_matching_runs(sample_feature_matching_binary, tmp_path, desc_type, desc_bits):
     image1, image2 = _find_image_pair()
 
     if not image1 or not image2:
         pytest.skip("必要な入力画像が見つかりません。submodule もしくは images/input を確認してください。")
+
+    lens_params = None
+    if desc_type in {2, 3, 5, 7}:
+        lens_params = _load_lens_params(image1.parent)
 
     cmd = [
         str(sample_feature_matching_binary),
@@ -56,6 +73,10 @@ def test_sample_feature_matching_runs(sample_feature_matching_binary, tmp_path, 
         f"--descriptor-type={desc_type}",
         f"--descriptor-bits={desc_bits}",
     ]
+
+    if lens_params:
+        for key, value in lens_params.items():
+            cmd.append(f"--{key}={value}")
 
     result = subprocess.run(cmd, cwd=tmp_path, capture_output=True, text=True)
 

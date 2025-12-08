@@ -52,12 +52,13 @@ void calcAngles(const GpuMat& image, GpuMat& points, cudaStream_t stream);
 void scalePoints(GpuMat& points, float scale, int octave, cudaStream_t stream);
 void convertKeypoints(const GpuMat& src, GpuMat& dst, cudaStream_t stream);
 
-static Ptr<EfficientDescriptorsAsync> createDescriber(EfficientFeatures::DescriptorType descriptorType)
+static Ptr<EfficientDescriptorsAsync> createDescriber(
+        EfficientFeatures::DescriptorType descriptorType, const SphericalLensParams& lensParams)
 {
-	switch (descriptorType)
-	{
-	case EfficientFeatures::BAD_256:
-		return cuda::BAD::create(1, cuda::BAD::SIZE_256_BITS);
+        switch (descriptorType)
+        {
+        case EfficientFeatures::BAD_256:
+                return cuda::BAD::create(1, cuda::BAD::SIZE_256_BITS);
 		break;
 	case EfficientFeatures::BAD_512:
 		return cuda::BAD::create(1, cuda::BAD::SIZE_512_BITS);
@@ -69,16 +70,16 @@ static Ptr<EfficientDescriptorsAsync> createDescriber(EfficientFeatures::Descrip
                 return cuda::HashSIFT::create(1, cuda::HashSIFT::SIZE_512_BITS);
                 break;
         case EfficientFeatures::SPHERICAL_BAD_256:
-                return cuda::SphericalBAD::create(1, cuda::BAD::SIZE_256_BITS);
+                return cuda::SphericalBAD::create(1, cuda::BAD::SIZE_256_BITS, lensParams);
                 break;
         case EfficientFeatures::SPHERICAL_BAD_512:
-                return cuda::SphericalBAD::create(1, cuda::BAD::SIZE_512_BITS);
+                return cuda::SphericalBAD::create(1, cuda::BAD::SIZE_512_BITS, lensParams);
                 break;
         case EfficientFeatures::SPHERICAL_HASH_SIFT_256:
-                return cuda::SphericalHashSIFT::create(1, cuda::HashSIFT::SIZE_256_BITS);
+                return cuda::SphericalHashSIFT::create(1, cuda::HashSIFT::SIZE_256_BITS, lensParams);
                 break;
         case EfficientFeatures::SPHERICAL_HASH_SIFT_512:
-                return cuda::SphericalHashSIFT::create(1, cuda::HashSIFT::SIZE_512_BITS);
+                return cuda::SphericalHashSIFT::create(1, cuda::HashSIFT::SIZE_512_BITS, lensParams);
                 break;
         case EfficientFeatures::AKAZE_256:
                 return cuda::AKAZE::create(1, 256);
@@ -87,16 +88,16 @@ static Ptr<EfficientDescriptorsAsync> createDescriber(EfficientFeatures::Descrip
                 return cuda::AKAZE::create(1, 512);
                 break;
         case EfficientFeatures::SPHERICAL_AKAZE_256:
-                return cuda::SphericalAKAZE::create(1, 256);
+                return cuda::SphericalAKAZE::create(1, 256, lensParams);
                 break;
         case EfficientFeatures::SPHERICAL_AKAZE_512:
-                return cuda::SphericalAKAZE::create(1, 512);
+                return cuda::SphericalAKAZE::create(1, 512, lensParams);
                 break;
         case EfficientFeatures::ORB:
                 return cuda::EORB::create(1);
                 break;
         case EfficientFeatures::SPHERICAL_ORB:
-                return cuda::SphericalORB::create(1);
+                return cuda::SphericalORB::create(1, lensParams);
                 break;
         default:
                 return nullptr;
@@ -222,14 +223,14 @@ class EfficientFeaturesImpl : public EfficientFeatures
 {
 public:
 
-	EfficientFeaturesImpl(int nfeatures, float scaleFactor, int nlevels,
-		int firstLevel, int fastThreshold, int nonmaxRadius, DescriptorType descriptorType) : nfeatures_(nfeatures), scaleFactor_(scaleFactor),
-		nlevels_(nlevels), firstLevel_(firstLevel), fastThreshold_(fastThreshold), nonmaxRadius_(nonmaxRadius), descriptorType_(descriptorType)
-	{
-		describer_ = createDescriber(descriptorType);
-		filter_ = cuda::createGaussianFilter(CV_8UC1, -1, Size(7, 7), 2, 2, BORDER_REFLECT_101);
-		h_buffer_.create(1, 16, CV_32S);
-	}
+        EfficientFeaturesImpl(int nfeatures, float scaleFactor, int nlevels,
+                int firstLevel, int fastThreshold, int nonmaxRadius, DescriptorType descriptorType) : nfeatures_(nfeatures), scaleFactor_(scaleFactor),
+                nlevels_(nlevels), firstLevel_(firstLevel), fastThreshold_(fastThreshold), nonmaxRadius_(nonmaxRadius), descriptorType_(descriptorType)
+        {
+                describer_ = createDescriber(descriptorType, lensParams_);
+                filter_ = cuda::createGaussianFilter(CV_8UC1, -1, Size(7, 7), 2, 2, BORDER_REFLECT_101);
+                h_buffer_.create(1, 16, CV_32S);
+        }
 
 	void detect(InputArray image, std::vector<KeyPoint>& keypoints, InputArray mask) override
 	{
@@ -411,11 +412,19 @@ public:
 	void setNonmaxRadius(int nonmaxRadius) { nonmaxRadius_ = nonmaxRadius; }
 	int getNonmaxRadius() const { return nonmaxRadius_; }
 
-	void setDescriptorType(DescriptorType descriptorType)
-	{
-		descriptorType_ = descriptorType;
-		describer_ = createDescriber(descriptorType);
-	}
+        void setDescriptorType(DescriptorType descriptorType)
+        {
+                descriptorType_ = descriptorType;
+                describer_ = createDescriber(descriptorType, lensParams_);
+        }
+
+        void setSphericalLensParams(const SphericalLensParams& params)
+        {
+                lensParams_ = params;
+                describer_ = createDescriber(descriptorType_, lensParams_);
+        }
+
+        SphericalLensParams getSphericalLensParams() const { return lensParams_; }
 
 	DescriptorType getDescriptorType() const { return descriptorType_; }
 
@@ -427,7 +436,8 @@ private:
 	int firstLevel_;
 	int fastThreshold_;
 	int nonmaxRadius_;
-	DescriptorType descriptorType_;
+        DescriptorType descriptorType_;
+        SphericalLensParams lensParams_{};
 
     GpuMat image_, mask_, keypoints_, descriptors_;
     std::vector<GpuMat> imagePyr_, maskPyr_, kptsPyr_, blurPyr_, descPyr_;

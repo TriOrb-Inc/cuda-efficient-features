@@ -15,7 +15,13 @@ find_package(CUDAToolkit REQUIRED)
 file(GLOB SRCS src/*.cpp src/*.cu src/*.h* ${INTERNAL_INCLUDE_DIR}/*.h*)
 add_library(${PROJECT_NAME})
 target_sources(${PROJECT_NAME} PRIVATE ${SRCS})
-target_include_directories(${PROJECT_NAME} PRIVATE ${INTERNAL_INCLUDE_DIR} ${OpenCV_INCLUDE_DIRS} ${CUDAToolkit_INCLUDE_DIRS})
+target_include_directories(${PROJECT_NAME}
+        PUBLIC
+                $<BUILD_INTERFACE:${INTERFACE_INCLUDE_DIR}>
+                $<INSTALL_INTERFACE:${CUDA_EFFICIENT_FEATURES_INCLUDE_INSTALL_DIR}>
+        PRIVATE
+                ${OpenCV_INCLUDE_DIRS}
+                ${CUDAToolkit_INCLUDE_DIRS})
 target_compile_features(${PROJECT_NAME} PRIVATE cxx_std_17)
 target_link_libraries(${PROJECT_NAME} PUBLIC ${OpenCV_LIBS} CUDA::cudart CUDA::cublas)
 #set_target_properties(${PROJECT_NAME} PROPERTIES INTERFACE_INCLUDE_DIRECTORIES ${INTERFACE_INCLUDE_DIR})

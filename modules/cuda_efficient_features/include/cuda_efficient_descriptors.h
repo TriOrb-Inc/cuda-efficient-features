@@ -24,6 +24,18 @@ namespace cv
 namespace cuda
 {
 
+struct SphericalLensParams
+{
+        float fx = 0.f;
+        float fy = 0.f;
+        float cx = 0.f;
+        float cy = 0.f;
+        float k1 = 0.f;
+        float k2 = 0.f;
+        float k3 = 0.f;
+        float k4 = 0.f;
+};
+
 class EfficientDescriptorsAsync
 {
 public:
@@ -85,8 +97,26 @@ public:
 	- <b> 5.00f </b> should be the scale for AKAZE, MSD, AGAST, FAST, BRISK keypoints
 	@param nbits Determine the number of bits in the descriptor. Should be either
 	BAD::SIZE_512_BITS or BAD::SIZE_256_BITS.
-	 */
-	static Ptr<BAD> create(float scaleFactor, int nbits = SIZE_256_BITS);
+         */
+        static Ptr<BAD> create(float scaleFactor, int nbits = SIZE_256_BITS);
+};
+
+class SphericalBAD : public EfficientDescriptorsAsync
+{
+public:
+        /** @brief Creates the Spherical BAD descriptor with horizontal wrapping.
+        @param scaleFactor Adjust the sampling window around detected keypoints:
+        - <b> 1.00f </b> should be the scale for ORB keypoints
+        - <b> 6.75f </b> should be the scale for SIFT detected keypoints
+        - <b> 6.25f </b> is default and fits for KAZE, SURF detected keypoints
+        - <b> 5.00f </b> should be the scale for AKAZE, MSD, AGAST, FAST, BRISK keypoints
+        @param nbits Determine the number of bits in the descriptor. Should be either
+        BAD::SIZE_512_BITS or BAD::SIZE_256_BITS.
+        @param lensParams Lens parameters for spherical projection. If fx/fy are 0, the implementation
+        falls back to an equirectangular assumption derived from the input image size.
+         */
+        static Ptr<SphericalBAD> create(float scaleFactor, int nbits = BAD::SIZE_256_BITS,
+                SphericalLensParams lensParams = {});
 };
 
 /**
@@ -116,21 +146,82 @@ public:
 	The diameter of the patch will be: croppingScale * kp.size
 	@param nbits Determine the number of bits in the descriptor. Should be either
 	HashSIFT::SIZE_512_BITS or HashSIFT::SIZE_256_BITS.
-	 */
-	static Ptr<HashSIFT> create(float croppingScale, int nbits = SIZE_256_BITS);
+         */
+        static Ptr<HashSIFT> create(float croppingScale, int nbits = SIZE_256_BITS);
+};
+
+class SphericalHashSIFT : public EfficientDescriptorsAsync
+{
+public:
+        /** @brief Creates the Spherical HashSIFT descriptor with horizontal wrapping.
+        @param croppingScale Determines the size of the patch cropped for description. The diameter of
+        the patch will be: croppingScale * kp.size
+        @param nbits Determine the number of bits in the descriptor. Should be either HashSIFT::SIZE_512_BITS
+        or HashSIFT::SIZE_256_BITS.
+        @param lensParams Lens parameters for spherical projection. If fx/fy are 0, the implementation
+        falls back to an equirectangular assumption derived from the input image size.
+         */
+        static Ptr<SphericalHashSIFT> create(float croppingScale, int nbits = HashSIFT::SIZE_256_BITS,
+                SphericalLensParams lensParams = {});
+};
+
+class AKAZE : public EfficientDescriptorsAsync
+{
+public:
+        /** @brief Creates the AKAZE descriptor with MLDB (binary) output.
+        @param scaleFactor Adjust the sampling window around detected keypoints:
+        - <b> 1.00f </b> should be the scale for ORB keypoints
+        - <b> 6.75f </b> should be the scale for SIFT detected keypoints
+        - <b> 6.25f </b> is default and fits for KAZE, SURF detected keypoints
+        - <b> 5.00f </b> should be the scale for AKAZE, MSD, AGAST, FAST, BRISK keypoints
+        @param descriptorBits Desired descriptor length in bits. Supported values are 256 or 512.
+         */
+        static Ptr<AKAZE> create(float scaleFactor, int descriptorBits = 256);
+};
+
+class SphericalAKAZE : public EfficientDescriptorsAsync
+{
+public:
+        /** @brief Creates the Spherical AKAZE descriptor with MLDB (binary) output and horizontal wrapping.
+        @param scaleFactor Adjust the sampling window around detected keypoints:
+        - <b> 1.00f </b> should be the scale for ORB keypoints
+        - <b> 6.75f </b> should be the scale for SIFT detected keypoints
+        - <b> 6.25f </b> is default and fits for KAZE, SURF detected keypoints
+        - <b> 5.00f </b> should be the scale for AKAZE, MSD, AGAST, FAST, BRISK keypoints
+        @param descriptorBits Desired descriptor length in bits. Supported values are 256 or 512.
+        @param lensParams Lens parameters for spherical projection. If fx/fy are 0, the implementation
+        falls back to an equirectangular assumption derived from the input image size.
+         */
+        static Ptr<SphericalAKAZE> create(float scaleFactor, int descriptorBits = 256,
+                SphericalLensParams lensParams = {});
 };
 
 class EORB : public EfficientDescriptorsAsync
 {
 public:
-	/** @brief Creates the ORB descriptor.
+        /** @brief Creates the ORB descriptor.
 	@param scaleFactor Adjust the sampling window around detected keypoints:
 	- <b> 1.00f </b> should be the scale for ORB keypoints
 	- <b> 6.75f </b> should be the scale for SIFT detected keypoints
 	- <b> 6.25f </b> is default and fits for KAZE, SURF detected keypoints
 	- <b> 5.00f </b> should be the scale for AKAZE, MSD, AGAST, FAST, BRISK keypoints
 	 */
-	static Ptr<EORB> create(float scale_factor);
+        static Ptr<EORB> create(float scale_factor);
+};
+
+class SphericalORB : public EfficientDescriptorsAsync
+{
+public:
+        /** @brief Creates the Spherical ORB descriptor with horizontal wrapping.
+        @param scaleFactor Adjust the sampling window around detected keypoints:
+        - <b> 1.00f </b> should be the scale for ORB keypoints
+        - <b> 6.75f </b> should be the scale for SIFT detected keypoints
+        - <b> 6.25f </b> is default and fits for KAZE, SURF detected keypoints
+        - <b> 5.00f </b> should be the scale for AKAZE, MSD, AGAST, FAST, BRISK keypoints
+        @param lensParams Lens parameters for spherical projection. If fx/fy are 0, the implementation
+        falls back to an equirectangular assumption derived from the input image size.
+         */
+        static Ptr<SphericalORB> create(float scale_factor, SphericalLensParams lensParams = {});
 };
 
 } // namespace cuda

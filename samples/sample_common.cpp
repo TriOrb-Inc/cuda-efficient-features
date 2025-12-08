@@ -16,20 +16,78 @@ limitations under the License.
 
 #include "sample_common.h"
 
+#include <iostream>
+
+
 #include <opencv2/imgproc.hpp>
 #include <opencv2/highgui.hpp>
 
 cv::cuda::EfficientFeatures::DescriptorType getDescriptorType(int descType, int descBits)
 {
-	using namespace cv::cuda;
+        using namespace cv::cuda;
 
-	if (descType == BAD)
-		return descBits == 256 ? EfficientFeatures::BAD_256 : EfficientFeatures::BAD_512;
+        descType = sanitizeDescriptorType(descType);
 
-	if (descType == HashSIFT)
-		return descBits == 256 ? EfficientFeatures::HASH_SIFT_256 : EfficientFeatures::HASH_SIFT_512;
+        if (descType == SampleDescriptorType::BAD)
+                return descBits == 256 ? EfficientFeatures::BAD_256 : EfficientFeatures::BAD_512;
 
-	return EfficientFeatures::HASH_SIFT_256;
+        if (descType == SampleDescriptorType::HashSIFT)
+                return descBits == 256 ? EfficientFeatures::HASH_SIFT_256 : EfficientFeatures::HASH_SIFT_512;
+
+        if (descType == SampleDescriptorType::SphericalBAD)
+                return descBits == 256 ? EfficientFeatures::SPHERICAL_BAD_256 : EfficientFeatures::SPHERICAL_BAD_512;
+
+        if (descType == SampleDescriptorType::SphericalHashSIFT)
+                return descBits == 256 ? EfficientFeatures::SPHERICAL_HASH_SIFT_256
+                                       : EfficientFeatures::SPHERICAL_HASH_SIFT_512;
+
+        if (descType == SampleDescriptorType::AKAZE)
+                return descBits == 256 ? EfficientFeatures::AKAZE_256 : EfficientFeatures::AKAZE_512;
+
+        if (descType == SampleDescriptorType::SphericalAKAZE)
+                return descBits == 256 ? EfficientFeatures::SPHERICAL_AKAZE_256 : EfficientFeatures::SPHERICAL_AKAZE_512;
+
+        if (descType == SampleDescriptorType::ORB)
+                return EfficientFeatures::ORB;
+
+        if (descType == SampleDescriptorType::SphericalORB)
+                return EfficientFeatures::SPHERICAL_ORB;
+
+        return EfficientFeatures::HASH_SIFT_256;
+}
+
+int normalizeDescriptorBits(int descType, int descBits)
+{
+        descType = sanitizeDescriptorType(descType);
+
+        const int sanitized = descBits == 512 ? 512 : 256;
+
+        if ((descType == SampleDescriptorType::ORB || descType == SampleDescriptorType::SphericalORB) && sanitized == 512)
+        {
+                std::cerr << "descriptor-bits=512 is not supported for ORB/SphericalORB. Fallback to 256 bits." << std::endl;
+                return 256;
+        }
+
+        return sanitized;
+}
+
+int sanitizeDescriptorType(int descType)
+{
+        if (descType < SampleDescriptorType::BAD || descType > SampleDescriptorType::SphericalORB)
+        {
+                std::cerr << "descriptor-type must be between 0 and 7. Fallback to BAD." << std::endl;
+                return SampleDescriptorType::BAD;
+        }
+
+        return descType;
+}
+
+const char* descriptorTypeName(int descType)
+{
+        static const char* descStr[] = { "BAD", "HashSIFT", "SphericalBAD", "SphericalHashSIFT", "AKAZE", "SphericalAKAZE", "ORB",
+                "SphericalORB" };
+
+        return descStr[sanitizeDescriptorType(descType)];
 }
 
 void convertToGray(const cv::Mat& src, cv::Mat& dst)

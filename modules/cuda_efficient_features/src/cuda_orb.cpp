@@ -29,122 +29,205 @@ limitations under the License.
 #include "cuda_efficient_features.h"
 
 #include <opencv2/cudaarithm.hpp>
+#include <opencv2/cudaimgproc.hpp>
+#include <opencv2/cudawarping.hpp>
 #include <opencv2/core/cuda_stream_accessor.hpp>
-#include <opencv2/features2d.hpp>
-#include <opencv2/cudafeatures2d.hpp>
 
-#include "cuda_orb_internal.h"
+#include <cmath>
+#include <vector>
+
 #include "cuda_efficient_features_internal.h"
-#include "device_buffer.h"
-
-#include <iostream>
+#include "cuda_orb_internal.h"
 
 namespace cv
 {
 	namespace cuda
 	{
 
-		void convertKeypoints(const GpuMat &src, GpuMat &dst, cudaStream_t stream);
+                namespace
+                {
+                        static constexpr int PARAM_SIZE = 256;
+                        static const Size PATCH_SIZE = Size(31, 31);
+                        static const int HALF_PATCH = PATCH_SIZE.width / 2;
 
-		class EORB_Impl : public EORB
-		{
+                        struct ORBBuffers
+                        {
+                                GpuMat image;
+                                GpuMat integral;
+                                GpuMat keypoints;
+                                GpuMat descriptors;
+                                Size lensBaseSize;
+                        };
 
-		public:
-			static const int LOCATION_ROW = 0;
-			static const int RESPONSE_ROW = 1;
-			static const int ANGLE_ROW = 2;
-			static const int OCTAVE_ROW = 3;
-			static const int SIZE_ROW = 4;
-			static const int ROWS_COUNT = 5;
+                        inline bool hasValidLens(const SphericalLensParams &lens)
+                        {
+                                return lens.fx > 0.f && lens.fy > 0.f;
+                        }
 
-			EORB_Impl(float scaleFactor) : scaleFactor_(scaleFactor), paramSize_(256), patchSize_(32, 32)
-			{
-				orb_cpu_ = cv::ORB::create(1);
-				orb_gpu_ = cv::cuda::ORB::create(1);
-			}
+                        inline SphericalLensParams resolveLens(const SphericalLensParams &lens, const Size &imageSize)
+                        {
+                                if (hasValidLens(lens))
+                                        return lens;
 
-			void compute(InputArray _image, KeyPoints &_keypoints, OutputArray _descriptors) override
-			{
-				orb_cpu_->compute(_image, _keypoints, _descriptors); // CPU only
-			}
+                                SphericalLensParams fallback;
+                                fallback.fx = static_cast<float>(imageSize.width) / 6.2831853071795864769f;
+                                fallback.fy = static_cast<float>(imageSize.height) / 3.14159265358979323846f;
+                                fallback.cx = 0.f;
+                                fallback.cy = static_cast<float>(imageSize.height) * 0.5f;
+                                fallback.k1 = 0.f;
+                                fallback.k2 = 0.f;
+                                fallback.k3 = 0.f;
+                                fallback.k4 = 0.f;
+                                return fallback;
+                        }
 
-			void convert(InputArray src, CV_OUT std::vector<KeyPoint> &dst)
-			{
-				Mat tmp;
-				if (src.kind() == _InputArray::KindFlag::MAT)
-					tmp = src.getMat();
-				else if (src.kind() == _InputArray::KindFlag::CUDA_GPU_MAT)
-					src.getGpuMat().download(tmp);
+                        inline SphericalLensParams scaleLensForImage(const SphericalLensParams &lens, const Size &imageSize,
+                                Size &baseSize)
+                        {
+                                SphericalLensParams resolved = resolveLens(lens, imageSize);
 
-				const Vec2s *points = tmp.ptr<Vec2s>(LOCATION_ROW);
-				const float *responses = tmp.ptr<float>(RESPONSE_ROW);
-				const float *angles = tmp.ptr<float>(ANGLE_ROW);
-				const int *octaves = tmp.ptr<int>(OCTAVE_ROW);
-				const float *sizes = tmp.ptr<float>(SIZE_ROW);
+                                if (!hasValidLens(lens))
+                                {
+                                        // The lens was invalid, so the resolved lens is derived from the current image size.
+                                        return resolved;
+                                }
 
-				const int nkeypoints = tmp.cols;
-				dst.resize(nkeypoints);
-				for (int i = 0; i < nkeypoints; i++)
-				{
-					KeyPoint kpt;
-					kpt.pt = Point2f(points[i][0], points[i][1]);
-					kpt.response = responses[i];
-					kpt.angle = angles[i];
-					kpt.octave = octaves[i];
-					kpt.size = sizes[i];
-					dst[i] = kpt;
-				}
-			}
+                                if (baseSize.area() == 0)
+                                        baseSize = imageSize;
 
-			void computeAsync(InputArray _image, InputArray _keypoints, OutputArray _descriptors, Stream &stream) override
-			{
-				// 作業中なのでCPU only
-				cv::Mat image, descriptors;
-				std::vector<KeyPoint> keypoints;
-				if (_image.kind() == _InputArray::KindFlag::MAT)
-					image = _image.getMat();
-				else if (_image.kind() == _InputArray::KindFlag::CUDA_GPU_MAT)
-					_image.getGpuMat().download(image);
-				convert(_keypoints, keypoints);
-				orb_cpu_->compute(image, keypoints, descriptors);
-				descriptors_.upload(descriptors, stream);
-#if 0
-				cv::Mat tmp(6, keypoints.size(), CV_32F);
-				for (auto &kpt : keypoints)
-				{
-					tmp.at<float>(0, 0) = kpt.pt.x;
-					tmp.at<float>(1, 0) = kpt.pt.y;
-					tmp.at<float>(2, 0) = kpt.response;
-					tmp.at<float>(3, 0) = kpt.angle;
-					tmp.at<float>(4, 0) = kpt.octave;
-					tmp.at<float>(5, 0) = kpt.size;
-				}
-				keypoints_.upload(tmp, stream);
-				orb_gpu_->computeAsync(_image, keypoints_, descriptors_, stream);
-				if (_descriptors.kind() == _InputArray::KindFlag::MAT)
-					descriptors_.download(_descriptors);
-#endif
-			}
+                                if (baseSize == imageSize)
+                                        return resolved;
 
-			int descriptorSize() const override { return 32; }
-			int descriptorType() const override { return CV_8U; }
-			int defaultNorm() const override { return NORM_HAMMING; }
+                                const float sx = static_cast<float>(imageSize.width) / static_cast<float>(baseSize.width);
+                                const float sy = static_cast<float>(imageSize.height) / static_cast<float>(baseSize.height);
 
-		private:
-			float scaleFactor_;
-			int paramSize_;
-			Size patchSize_;
-			cv::Ptr<cv::ORB> orb_cpu_;
-			cv::Ptr<cv::cuda::ORB> orb_gpu_;
+                                resolved.fx *= sx;
+                                resolved.fy *= sy;
+                                resolved.cx *= sx;
+                                resolved.cy *= sy;
 
-			GpuMat image_, keypoints_, descriptors_, integral_;
-			DeviceBuffer buf_;
-		};
+                                return resolved;
+                        }
 
-		Ptr<EORB> EORB::create(float scaleFactor)
-		{
-			return makePtr<EORB_Impl>(scaleFactor);
-		}
+                        template <bool WrapHorizontal>
+                        void computeDescriptors(InputArray _image, const std::variant<_InputArray, KeyPoints> &_keypoints,
+                                OutputArray _descriptors, Stream &stream, float scaleFactor, ORBBuffers &buffers,
+                                const SphericalLensParams &lens)
+                        {
+                                if (_image.empty())
+                                        return;
 
-	} // namespace cuda
+                                if (isEmpty(_keypoints))
+                                {
+                                        _descriptors.release();
+                                        return;
+                                }
+
+                                CV_Assert(_image.type() == CV_8U);
+
+                                const Size imageSize = _image.size();
+                                const SphericalLensParams resolvedLens = scaleLensForImage(lens, imageSize, buffers.lensBaseSize);
+
+                                getInputMat(_image, buffers.image, stream);
+
+                                if constexpr (WrapHorizontal)
+                                {
+                                        GpuMat horizontalWrapped;
+                                        cv::cuda::copyMakeBorder(buffers.image, horizontalWrapped, 0, 0, HALF_PATCH, HALF_PATCH,
+                                                BORDER_WRAP, Scalar(), stream);
+
+                                        cv::cuda::copyMakeBorder(horizontalWrapped, buffers.image, HALF_PATCH, HALF_PATCH, 0, 0,
+                                                BORDER_REFLECT_101, Scalar(), stream);
+                                }
+
+                                gpu::calcIntegralImage(buffers.image, buffers.integral, stream);
+
+                                getKeypointsMat(_keypoints, buffers.keypoints, stream);
+
+                                if constexpr (WrapHorizontal)
+                                {
+                                        gpu::normalizeSphericalKeypoints(buffers.keypoints, imageSize, resolvedLens,
+                                                StreamAccessor::getStream(stream));
+                                        cv::cuda::add(buffers.keypoints, Scalar(HALF_PATCH, HALF_PATCH, 0, 0), buffers.keypoints,
+                                                noArray(), -1, stream);
+                                }
+
+                                getOutputMat(_descriptors, buffers.descriptors, buffers.keypoints.rows, PARAM_SIZE / 8, CV_8U);
+
+                                gpu::computeORB(buffers.integral, buffers.keypoints, buffers.descriptors, scaleFactor, PARAM_SIZE,
+                                        PATCH_SIZE, WrapHorizontal, StreamAccessor::getStream(stream));
+
+                                if (_descriptors.kind() == _InputArray::KindFlag::MAT)
+                                        buffers.descriptors.download(_descriptors, stream);
+                        }
+                } // namespace
+
+                class EORB_Impl : public EORB
+                {
+                public:
+                        explicit EORB_Impl(float scaleFactor) : scaleFactor_(scaleFactor) {}
+
+                        void compute(InputArray _image, KeyPoints &_keypoints, OutputArray _descriptors) override
+                        {
+                                const std::variant<_InputArray, KeyPoints> keypoints = _keypoints;
+                                computeDescriptors<false>(_image, keypoints, _descriptors, Stream::Null(), scaleFactor_, buffers_,
+                                        SphericalLensParams{});
+                        }
+
+                        void computeAsync(InputArray _image, InputArray _keypoints, OutputArray _descriptors, Stream &stream) override
+                        {
+                                const std::variant<_InputArray, KeyPoints> keypoints = _keypoints;
+                                computeDescriptors<false>(_image, keypoints, _descriptors, stream, scaleFactor_, buffers_,
+                                        SphericalLensParams{});
+                        }
+
+                        int descriptorSize() const override { return PARAM_SIZE / 8; }
+                        int descriptorType() const override { return CV_8U; }
+                        int defaultNorm() const override { return NORM_HAMMING; }
+
+                private:
+                        float scaleFactor_;
+                        ORBBuffers buffers_;
+                };
+
+                class SphericalORB_Impl : public SphericalORB
+                {
+                public:
+                        explicit SphericalORB_Impl(float scaleFactor, SphericalLensParams lensParams)
+                                : scaleFactor_(scaleFactor), lensParams_(lensParams) {}
+
+                        void compute(InputArray _image, KeyPoints &_keypoints, OutputArray _descriptors) override
+                        {
+                                const std::variant<_InputArray, KeyPoints> keypoints = _keypoints;
+                                computeDescriptors<true>(_image, keypoints, _descriptors, Stream::Null(), scaleFactor_, buffers_,
+                                        lensParams_);
+                        }
+
+                        void computeAsync(InputArray _image, InputArray _keypoints, OutputArray _descriptors, Stream &stream) override
+                        {
+                                const std::variant<_InputArray, KeyPoints> keypoints = _keypoints;
+                                computeDescriptors<true>(_image, keypoints, _descriptors, stream, scaleFactor_, buffers_, lensParams_);
+                        }
+
+                        int descriptorSize() const override { return PARAM_SIZE / 8; }
+                        int descriptorType() const override { return CV_8U; }
+                        int defaultNorm() const override { return NORM_HAMMING; }
+
+                private:
+                        float scaleFactor_;
+                        SphericalLensParams lensParams_;
+                        ORBBuffers buffers_;
+                };
+
+                Ptr<EORB> EORB::create(float scaleFactor)
+                {
+                        return makePtr<EORB_Impl>(scaleFactor);
+                }
+
+                Ptr<SphericalORB> SphericalORB::create(float scaleFactor, SphericalLensParams lensParams)
+                {
+                        return makePtr<SphericalORB_Impl>(scaleFactor, lensParams);
+                }
+
+        } // namespace cuda
 } // namespace cv

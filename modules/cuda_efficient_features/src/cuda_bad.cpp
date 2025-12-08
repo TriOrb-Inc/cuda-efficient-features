@@ -21,17 +21,128 @@ limitations under the License.
 
 #include "cuda_efficient_descriptors.h"
 
+#include <algorithm>
+
 #include <opencv2/cudaarithm.hpp>
 #include <opencv2/core/cuda_stream_accessor.hpp>
 
 #include "cuda_bad_internal.h"
 #include "cuda_efficient_features_internal.h"
+#include "cuda_orb_internal.h"
 #include "device_buffer.h"
 
 namespace cv
 {
 namespace cuda
 {
+
+namespace
+{
+        constexpr int HALF_PATCH = 16;
+
+        inline bool hasValidLens(const SphericalLensParams& lens)
+        {
+                return lens.fx > 0.f && lens.fy > 0.f;
+        }
+
+        inline SphericalLensParams resolveLens(const SphericalLensParams& lens, const Size& imageSize)
+        {
+                if (hasValidLens(lens))
+                        return lens;
+
+                SphericalLensParams fallback;
+                fallback.fx = static_cast<float>(imageSize.width) / 6.2831853071795864769f;
+                fallback.fy = static_cast<float>(imageSize.height) / 3.14159265358979323846f;
+                fallback.cx = 0.f;
+                fallback.cy = static_cast<float>(imageSize.height) * 0.5f;
+                fallback.k1 = 0.f;
+                fallback.k2 = 0.f;
+                fallback.k3 = 0.f;
+                fallback.k4 = 0.f;
+                return fallback;
+        }
+
+        inline SphericalLensParams scaleLensForImage(const SphericalLensParams& lens, const Size& imageSize, Size& baseSize)
+        {
+                SphericalLensParams resolved = resolveLens(lens, imageSize);
+
+                if (!hasValidLens(lens))
+                        return resolved;
+
+                if (baseSize.area() == 0)
+                        baseSize = imageSize;
+
+                if (baseSize == imageSize)
+                        return resolved;
+
+                const float sx = static_cast<float>(imageSize.width) / static_cast<float>(baseSize.width);
+                const float sy = static_cast<float>(imageSize.height) / static_cast<float>(baseSize.height);
+
+                resolved.fx *= sx;
+                resolved.fy *= sy;
+                resolved.cx *= sx;
+                resolved.cy *= sy;
+
+                return resolved;
+        }
+
+        struct BADBuffers
+        {
+                GpuMat image, keypoints, descriptors, integral;
+                DeviceBuffer buf;
+        };
+
+        template <bool WrapHorizontal>
+        void computeBADDescriptors(InputArray _image, const std::variant<_InputArray, KeyPoints>& _keypoints,
+                OutputArray _descriptors, Stream& stream, float scaleFactor, int paramSize, Size patchSize,
+                BADBuffers& buffers, const SphericalLensParams& lens, Size& lensBaseSize)
+        {
+                if (_image.empty())
+                        return;
+
+                if (isEmpty(_keypoints))
+                {
+                        _descriptors.release();
+                        return;
+                }
+
+                CV_Assert(_image.type() == CV_8U);
+
+                const Size imageSize = _image.size();
+                const SphericalLensParams resolvedLens = scaleLensForImage(lens, imageSize, lensBaseSize);
+
+                getInputMat(_image, buffers.image, stream);
+
+                if constexpr (WrapHorizontal)
+                {
+                        GpuMat horizontalWrapped;
+                        cv::cuda::copyMakeBorder(buffers.image, horizontalWrapped, 0, 0, HALF_PATCH, HALF_PATCH, BORDER_WRAP,
+                                Scalar(), stream);
+                        cv::cuda::copyMakeBorder(horizontalWrapped, buffers.image, HALF_PATCH, HALF_PATCH, 0, 0,
+                                BORDER_REFLECT_101, Scalar(), stream);
+                }
+
+                gpu::calcIntegralImage(buffers.image, buffers.integral, stream);
+
+                getKeypointsMat(_keypoints, buffers.keypoints, stream);
+
+                if constexpr (WrapHorizontal)
+                {
+                        gpu::normalizeSphericalKeypoints(buffers.keypoints, imageSize, resolvedLens,
+                                StreamAccessor::getStream(stream));
+                        cv::cuda::add(buffers.keypoints, Scalar(HALF_PATCH, HALF_PATCH, 0, 0), buffers.keypoints, noArray(), -1,
+                                stream);
+                }
+
+                getOutputMat(_descriptors, buffers.descriptors, buffers.keypoints.rows, paramSize / 8, CV_8U);
+
+                gpu::computeBAD(buffers.integral, buffers.keypoints, buffers.descriptors, scaleFactor, paramSize, patchSize,
+                        StreamAccessor::getStream(stream));
+
+                if (_descriptors.kind() == _InputArray::KindFlag::MAT)
+                        buffers.descriptors.download(_descriptors);
+        }
+} // namespace
 
 class BADImpl : public BAD
 {
@@ -90,13 +201,59 @@ private:
 	Size patchSize_;
 	int paramSize_;
 
-	GpuMat image_, keypoints_, descriptors_, integral_;
-	DeviceBuffer buf_;
+        GpuMat image_, keypoints_, descriptors_, integral_;
+        DeviceBuffer buf_;
+};
+
+class SphericalBADImpl : public SphericalBAD
+{
+public:
+
+        SphericalBADImpl(float scaleFactor, int nbits, SphericalLensParams lensParams)
+                : scaleFactor_(scaleFactor), nbits_(nbits), patchSize_(32, 32), lensParams_(lensParams)
+        {
+                paramSize_ = nbits == BAD::SIZE_256_BITS ? 256 : 512;
+                gpu::loadBoxPairParams(paramSize_);
+        }
+
+        void compute(InputArray _image, KeyPoints& _keypoints, OutputArray _descriptors) override
+        {
+                const std::variant<_InputArray, KeyPoints> keypoints = _keypoints;
+                computeBADDescriptors<true>(_image, keypoints, _descriptors, Stream::Null(), scaleFactor_, paramSize_, patchSize_,
+                        buffers_, lensParams_, lensBaseSize_);
+        }
+
+        void computeAsync(InputArray _image, InputArray _keypoints, OutputArray _descriptors, Stream& stream) override
+        {
+                const std::variant<_InputArray, KeyPoints> keypoints = _keypoints;
+                computeBADDescriptors<true>(_image, keypoints, _descriptors, stream, scaleFactor_, paramSize_, patchSize_,
+                        buffers_, lensParams_, lensBaseSize_);
+        }
+
+        int descriptorSize() const override { return paramSize_ / 8; }
+        int descriptorType() const override { return CV_8U; }
+        int defaultNorm() const override { return NORM_HAMMING; }
+
+private:
+        float scaleFactor_;
+        int nbits_;
+        Size patchSize_;
+        int paramSize_;
+
+        SphericalLensParams lensParams_;
+        Size lensBaseSize_;
+
+        BADBuffers buffers_;
 };
 
 Ptr<BAD> BAD::create(float scaleFactor, int nbits)
 {
-	return makePtr<BADImpl>(scaleFactor, nbits);
+        return makePtr<BADImpl>(scaleFactor, nbits);
+}
+
+Ptr<SphericalBAD> SphericalBAD::create(float scaleFactor, int nbits, SphericalLensParams lensParams)
+{
+        return makePtr<SphericalBADImpl>(scaleFactor, nbits, lensParams);
 }
 
 } // namespace cuda

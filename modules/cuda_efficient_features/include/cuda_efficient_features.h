@@ -20,6 +20,8 @@ limitations under the License.
 #include <opencv2/core/cuda.hpp>
 #include <opencv2/features2d.hpp>
 
+#include "cuda_efficient_descriptors.h"
+
 namespace cv
 {
 namespace cuda
@@ -36,14 +38,23 @@ public:
 	static const int SIZE_ROW     = 4;
 	static const int ROWS_COUNT   = 5;
 
-	enum DescriptorType
-	{
-		BAD_256,
-		BAD_512,
-		HASH_SIFT_256,
-		HASH_SIFT_512,
-		ORB,
-	};
+        enum DescriptorType
+        {
+                BAD_256,
+                BAD_512,
+                HASH_SIFT_256,
+                HASH_SIFT_512,
+                SPHERICAL_BAD_256,
+                SPHERICAL_BAD_512,
+                SPHERICAL_HASH_SIFT_256,
+                SPHERICAL_HASH_SIFT_512,
+                AKAZE_256,
+                AKAZE_512,
+                SPHERICAL_AKAZE_256,
+                SPHERICAL_AKAZE_512,
+                ORB,
+                SPHERICAL_ORB,
+        };
 
 	static Ptr<EfficientFeatures> create(int nfeatures = 5000, float scaleFactor = 1.2f, int nlevels = 8,
 		int firstLevel = 0, int fastThreshold = 20, int nonmaxRadius = 15, DescriptorType dtype = HASH_SIFT_256);
@@ -94,8 +105,9 @@ public:
 	virtual void setNonmaxRadius(int nonmaxRadius) = 0;
 	virtual int getNonmaxRadius() const = 0;
 
-	virtual void setDescriptorType(DescriptorType descriptorType) = 0;
+	virtual void setDescriptorType(DescriptorType descriptorType, const SphericalLensParams& params = SphericalLensParams()) = 0;
 	virtual DescriptorType getDescriptorType() const = 0;
+	virtual SphericalLensParams getSphericalLensParams() const = 0;
 };
 
 } // namespace cuda

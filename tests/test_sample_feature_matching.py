@@ -33,8 +33,8 @@ def _find_image_pair():
     ]
 
     for base in candidates:
-        image1 = base / "1707121165.511_cam0.jpg"
-        image2 = base / "1707121169.811_cam0.jpg"
+        image1 = base / "sample01/left.jpg"
+        image2 = base / "sample01/right.jpg"
         if image1.exists() and image2.exists():
             return image1, image2
 

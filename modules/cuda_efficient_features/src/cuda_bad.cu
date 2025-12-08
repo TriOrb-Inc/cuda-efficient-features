@@ -27,6 +27,7 @@ limitations under the License.
 #include <opencv2/cudev/grid/detail/integral.hpp>
 
 #include "cuda_macro.h"
+#include "spherical_sampling.cuh"
 
 namespace cv
 {
@@ -50,6 +51,61 @@ __constant__ BoxPairParams box_pair_params[BOX_PAIR_PARAMS_MAX_SIZE];
 __constant__ float thresholds_[BOX_PAIR_PARAMS_MAX_SIZE];
 
 static __device__ inline int CV_ROUNDNUM(float x) { return (int)(x + 0.5f); }
+
+static __device__ inline float sampleImageBilinear(const PtrStepSzb image, float x, float y)
+{
+        x = fminf(fmaxf(x, 0.f), static_cast<float>(image.cols - 1));
+        y = fminf(fmaxf(y, 0.f), static_cast<float>(image.rows - 1));
+
+        const int x0 = static_cast<int>(floorf(x));
+        const int y0 = static_cast<int>(floorf(y));
+        const int x1 = (x0 + 1 < image.cols) ? (x0 + 1) : (image.cols - 1);
+        const int y1 = (y0 + 1 < image.rows) ? (y0 + 1) : (image.rows - 1);
+
+        const float dx = x - static_cast<float>(x0);
+        const float dy = y - static_cast<float>(y0);
+
+        const float p00 = static_cast<float>(image(y0, x0));
+        const float p10 = static_cast<float>(image(y0, x1));
+        const float p01 = static_cast<float>(image(y1, x0));
+        const float p11 = static_cast<float>(image(y1, x1));
+
+        const float v0 = p00 + dx * (p10 - p00);
+        const float v1 = p01 + dx * (p11 - p01);
+        return v0 + dy * (v1 - v0);
+}
+
+static __device__ inline float sampleBoxMean(const PtrStepSzb image, int cx, int cy, int radius,
+        const SphericalSamplingParams &params)
+{
+        const int side = (1 + (radius << 1) > 1) ? (1 + (radius << 1)) : 1;
+        const int samplesPerDim = (side < 6) ? side : 6;
+        const float step = static_cast<float>(side) / static_cast<float>(samplesPerDim);
+
+        const float xStart = static_cast<float>(cx - radius) + step * 0.5f;
+        const float yStart = static_cast<float>(cy - radius) + step * 0.5f;
+
+        float sum = 0.f;
+        int count = 0;
+        for (float yy = yStart; yy < yStart + static_cast<float>(side); yy += step)
+        {
+                for (float xx = xStart; xx < xStart + static_cast<float>(side); xx += step)
+                {
+                        float sx = xx;
+                        float sy = yy;
+                        if (params.enabled)
+                        {
+                                const float2 mapped = mapToLens(xx, yy, params);
+                                sx = mapped.x;
+                                sy = mapped.y;
+                        }
+                        sum += sampleImageBilinear(image, sx, sy);
+                        ++count;
+                }
+        }
+
+        return (count > 0) ? (sum / static_cast<float>(count)) : 0.f;
+}
 
 /**
  * @brief Function that determines if a keypoint is close to the image border.
@@ -315,6 +371,46 @@ __global__ void computeBADKernel(const PtrStepSzi integral, const float4* keypoi
 	}
 }
 
+__global__ void computeSphericalBADKernel(const PtrStepSzb image, const float4* keypoints, int nkeypoints,
+        PtrStep<uchar> descriptors, float scaleFactor, int paramSize, int patchW, int patchH,
+        SphericalSamplingParams params)
+{
+        const int kpIdx = blockDim.y * blockIdx.y + threadIdx.y;
+        const int boxIdx = blockDim.x * blockIdx.x + threadIdx.x;
+        const int bitIdx = 7 - (boxIdx % 8);
+
+        uchar byte = 0;
+        BoxPairParams box_pair;
+        AffineParams M;
+
+        if (kpIdx < nkeypoints)
+        {
+                const float4 kpt = keypoints[kpIdx];
+                const float x = kpt.x;
+                const float y = kpt.y;
+                const float kpSize = kpt.z;
+                const float angle = kpt.w;
+
+                calcAffineParams(x, y, kpSize, angle, M, patchW, patchH, scaleFactor);
+                transformBoxPairParams(box_pair_params[boxIdx], box_pair, M);
+
+                const float average1 = sampleBoxMean(image, box_pair.x1, box_pair.y1, box_pair.boxRadius, params);
+                const float average2 = sampleBoxMean(image, box_pair.x2, box_pair.y2, box_pair.boxRadius, params);
+
+                byte |= (average1 - average2 <= thresholds_[boxIdx]) << bitIdx;
+
+                byte |= __shfl_xor_sync(0xffffffff, byte, 4);
+                byte |= __shfl_xor_sync(0xffffffff, byte, 2);
+                byte |= __shfl_xor_sync(0xffffffff, byte, 1);
+
+                if (bitIdx == 0)
+                {
+                        const int byteIdx = boxIdx / 8;
+                        descriptors(kpIdx, byteIdx) = byte;
+                }
+        }
+}
+
 void loadBoxPairParams(int paramSIze)
 {
 #include "bad.p512.h"
@@ -333,8 +429,9 @@ void loadBoxPairParams(int paramSIze)
 		CV_Error(Error::StsBadArg, "n_boxes should be either SIZE_512_BITS or SIZE_256_BITS");
 }
 
-void computeBAD(const GpuMat& integral, const GpuMat& keypoints, GpuMat& descriptors,
-	float scaleFactor, int paramSize, Size patchSize, cudaStream_t stream)
+void computeBAD(const GpuMat& image, const GpuMat& integral, const GpuMat& keypoints, GpuMat& descriptors,
+	float scaleFactor, int paramSize, Size patchSize, const SphericalSamplingParams& sphericalParams,
+        cudaStream_t stream)
 {
 	const int nkeypoints = keypoints.rows;
 	const int BLOCK_SIZE_X = 16;
@@ -342,8 +439,16 @@ void computeBAD(const GpuMat& integral, const GpuMat& keypoints, GpuMat& descrip
 	const dim3 dimGrid(divUp(paramSize, BLOCK_SIZE_X), divUp(nkeypoints, BLOCK_SIZE_Y), 1);
 	const dim3 dimBlock(BLOCK_SIZE_X, BLOCK_SIZE_Y, 1);
 
-	computeBADKernel<<<dimGrid, dimBlock, 0, stream>>>(integral, keypoints.ptr<float4>(), nkeypoints, descriptors,
-		scaleFactor, paramSize, patchSize.width, patchSize.height);
+        if (sphericalParams.enabled)
+        {
+                computeSphericalBADKernel<<<dimGrid, dimBlock, 0, stream>>>(image, keypoints.ptr<float4>(), nkeypoints,
+                        descriptors, scaleFactor, paramSize, patchSize.width, patchSize.height, sphericalParams);
+        }
+        else
+        {
+                computeBADKernel<<<dimGrid, dimBlock, 0, stream>>>(integral, keypoints.ptr<float4>(), nkeypoints, descriptors,
+                        scaleFactor, paramSize, patchSize.width, patchSize.height);
+        }
 	CUDA_CHECK(cudaGetLastError());
 }
 

@@ -33,7 +33,7 @@ static std::string keys =
 "{ max-keypoints   |  10000 | maximum number of keypoints.                }"
 "{ fast-threshold  |     20 | FAST threshold.                             }"
 "{ nonmax-radius   |     15 | radius of non-maximum suppression.          }"
-"{ descriptor-type |      0 | descriptor type(0:BAD 1:HashSIFT 2:SphericalBAD 3:SphericalHashSIFT 4:AKAZE 5:SphericalAKAZE 6:ORB 7:SphericalORB). }"
+"{ descriptor-type |      0 | descriptor type(0:BAD 1:HashSIFT 2:SphericalBAD 3:SphericalHashSIFT 4:AKAZE 5:SphericalAKAZE 6:ORB 7:SphericalORB 8:SIFT 9:SphericalSIFT). }"
 "{ descriptor-bits |    256 | descriptor bits(256 or 512).                }"
 "{ compute-async   |        | compute asynchronously.                     }"
 "{ no-gui          |        | disable GUI rendering (useful in headless environments). }"

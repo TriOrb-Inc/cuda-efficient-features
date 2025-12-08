@@ -54,6 +54,8 @@ public:
                 SPHERICAL_AKAZE_512,
                 ORB,
                 SPHERICAL_ORB,
+                SIFT,
+                SPHERICAL_SIFT,
         };
 
 	static Ptr<EfficientFeatures> create(int nfeatures = 5000, float scaleFactor = 1.2f, int nlevels = 8,

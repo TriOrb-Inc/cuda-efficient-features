@@ -30,6 +30,7 @@ limitations under the License.
 #include "cuda_hash_sift_internal.h"
 #include "cuda_efficient_features_internal.h"
 #include "cuda_orb_internal.h"
+#include "spherical_projection.hpp"
 #include "device_buffer.h"
 
 namespace cv
@@ -144,6 +145,163 @@ namespace
         }
 } // namespace
 
+class SIFTImpl : public SIFT
+{
+public:
+
+        explicit SIFTImpl(float croppingScale) : croppingScale_(croppingScale)
+        {
+        }
+
+        void computeSIFT(InputArray _image, InputKeyPoints _keypoints, OutputArray _descriptors, Stream& stream)
+        {
+                if (_image.empty())
+                        return;
+
+                if (isEmpty(_keypoints))
+                {
+                        _descriptors.release();
+                        return;
+                }
+
+                CV_Assert(_image.type() == CV_8U);
+
+                getInputMat(_image, image_, stream);
+                getKeypointsMat(_keypoints, keypoints_, stream);
+                getOutputMat(_descriptors, descriptors_, keypoints_.rows, descriptorSize(), descriptorType());
+
+                GpuMat responses = bufResponses_.createMat(keypoints_.rows, 129, CV_32F);
+                SphericalSamplingParams sphericalParams;
+                gpu::computePatchSIFTs(image_, keypoints_, responses, croppingScale_, 1./6, 1.6, sphericalParams,
+                        StreamAccessor::getStream(stream));
+
+                GpuMat raw = responses.colRange(1, responses.cols);
+                raw.copyTo(descriptors_, stream);
+
+                if (_descriptors.kind() == _InputArray::KindFlag::MAT)
+                        descriptors_.download(_descriptors);
+        }
+
+        void compute(InputArray _image, KeyPoints& _keypoints, OutputArray _descriptors) override
+        {
+                computeSIFT(_image, _keypoints, _descriptors, Stream::Null());
+        }
+
+        void computeAsync(InputArray _image, InputArray _keypoints, OutputArray _descriptors, Stream& stream) override
+        {
+                computeSIFT(_image, _keypoints, _descriptors, stream);
+        }
+
+        int descriptorSize() const override { return 128; }
+        int descriptorType() const override { return CV_32F; }
+        int defaultNorm() const override { return NORM_L2; }
+
+private:
+
+        float croppingScale_;
+        GpuMat image_, keypoints_, descriptors_;
+        DeviceBuffer bufResponses_;
+};
+
+class SphericalSIFTImpl : public SphericalSIFT
+{
+public:
+
+        SphericalSIFTImpl(float croppingScale, SphericalLensParams lensParams)
+                : croppingScale_(croppingScale), lensParams_(lensParams)
+        {
+        }
+
+        void computeSIFT(InputArray _image, InputKeyPoints _keypoints, OutputArray _descriptors, Stream& stream,
+                const SphericalLensParams& lens)
+        {
+                if (_image.empty())
+                        return;
+
+                if (isEmpty(_keypoints))
+                {
+                        _descriptors.release();
+                        return;
+                }
+
+                CV_Assert(_image.type() == CV_8U);
+
+                const Size imageSize = _image.size();
+                const SphericalLensParams resolvedLens = resolveLens(lens, imageSize);
+                const SphericalProjection projection = buildSphericalProjection(resolvedLens, imageSize);
+
+                getInputMat(_image, image_, stream);
+
+                if (projection.wrapHorizontal)
+                {
+                        GpuMat padded;
+                        cv::cuda::copyMakeBorder(image_, padded, 0, 0, HALF_PATCH, HALF_PATCH, BORDER_WRAP, Scalar(), stream);
+                        cv::cuda::copyMakeBorder(padded, image_, HALF_PATCH, HALF_PATCH, 0, 0, BORDER_REFLECT_101, Scalar(), stream);
+                }
+                else
+                {
+                        cv::cuda::copyMakeBorder(image_, image_, HALF_PATCH, HALF_PATCH, HALF_PATCH, HALF_PATCH, BORDER_REFLECT_101,
+                                Scalar(), stream);
+                }
+
+                getKeypointsMat(_keypoints, keypoints_, stream);
+                gpu::normalizeSphericalKeypoints(keypoints_, imageSize, resolvedLens, projection,
+                        StreamAccessor::getStream(stream));
+                cv::cuda::add(keypoints_, Scalar(HALF_PATCH, HALF_PATCH, 0, 0), keypoints_, noArray(), -1, stream);
+
+                getOutputMat(_descriptors, descriptors_, keypoints_.rows, descriptorSize(), descriptorType());
+
+                SphericalSamplingParams sphericalParams;
+                if (hasValidLens(lens))
+                {
+                        sphericalParams.enabled = 1;
+                        sphericalParams.wrapHorizontal = projection.wrapHorizontal ? 1 : 0;
+                        sphericalParams.padding = HALF_PATCH;
+                        sphericalParams.imageWidth = imageSize.width;
+                        sphericalParams.imageHeight = imageSize.height;
+                        sphericalParams.lens = resolvedLens;
+                        sphericalParams.projection = projection;
+                }
+
+                GpuMat responses = bufResponses_.createMat(keypoints_.rows, 129, CV_32F);
+                gpu::computePatchSIFTs(image_, keypoints_, responses, croppingScale_, 1./6, 1.6, sphericalParams,
+                        StreamAccessor::getStream(stream));
+
+                GpuMat raw = responses.colRange(1, responses.cols);
+                raw.copyTo(descriptors_, stream);
+
+                if (_descriptors.kind() == _InputArray::KindFlag::MAT)
+                        descriptors_.download(_descriptors);
+        }
+
+        void compute(InputArray _image, KeyPoints& _keypoints, OutputArray _descriptors) override
+        {
+                const std::variant<_InputArray, KeyPoints> keypoints = _keypoints;
+                const SphericalLensParams scaledLens = scaleLensForImage(lensParams_, _image.size(), lensBaseSize_);
+                computeSIFT(_image, keypoints, _descriptors, Stream::Null(), scaledLens);
+        }
+
+        void computeAsync(InputArray _image, InputArray _keypoints, OutputArray _descriptors, Stream& stream) override
+        {
+                const std::variant<_InputArray, KeyPoints> keypoints = _keypoints;
+                const SphericalLensParams scaledLens = scaleLensForImage(lensParams_, _image.size(), lensBaseSize_);
+                computeSIFT(_image, keypoints, _descriptors, stream, scaledLens);
+        }
+
+        int descriptorSize() const override { return 128; }
+        int descriptorType() const override { return CV_32F; }
+        int defaultNorm() const override { return NORM_L2; }
+
+private:
+
+        float croppingScale_;
+        SphericalLensParams lensParams_;
+        Size lensBaseSize_;
+
+        GpuMat image_, keypoints_, descriptors_;
+        DeviceBuffer bufResponses_;
+};
+
 class HashSIFTImpl : public HashSIFT
 {
 public:
@@ -183,7 +341,9 @@ public:
 		getOutputMat(_descriptors, descriptors_, keypoints_.rows, descriptorSize(), descriptorType());
 
 		GpuMat responses = bufResponses_.createMat(keypoints_.rows, 129, CV_32F);
-		gpu::computePatchSIFTs(image_, keypoints_, responses, croppingScale_, 1./6, 1.6, StreamAccessor::getStream(stream));
+                SphericalSamplingParams sphericalParams;
+		gpu::computePatchSIFTs(image_, keypoints_, responses, croppingScale_, 1./6, 1.6, sphericalParams,
+                        StreamAccessor::getStream(stream));
 		matmulAndSign_(responses, d_bMatrix_, descriptors_, stream);
 
 		if (_descriptors.kind() == _InputArray::KindFlag::MAT)
@@ -252,21 +412,43 @@ public:
 
                 const Size imageSize = _image.size();
                 const SphericalLensParams resolvedLens = resolveLens(lens, imageSize);
+                const SphericalProjection projection = buildSphericalProjection(resolvedLens, imageSize);
 
                 getInputMat(_image, image_, stream);
 
-                GpuMat padded;
-                cv::cuda::copyMakeBorder(image_, padded, 0, 0, HALF_PATCH, HALF_PATCH, BORDER_WRAP, Scalar(), stream);
-                cv::cuda::copyMakeBorder(padded, image_, HALF_PATCH, HALF_PATCH, 0, 0, BORDER_REFLECT_101, Scalar(), stream);
+                if (projection.wrapHorizontal)
+                {
+                        GpuMat padded;
+                        cv::cuda::copyMakeBorder(image_, padded, 0, 0, HALF_PATCH, HALF_PATCH, BORDER_WRAP, Scalar(), stream);
+                        cv::cuda::copyMakeBorder(padded, image_, HALF_PATCH, HALF_PATCH, 0, 0, BORDER_REFLECT_101, Scalar(), stream);
+                }
+                else
+                {
+                        cv::cuda::copyMakeBorder(image_, image_, HALF_PATCH, HALF_PATCH, HALF_PATCH, HALF_PATCH, BORDER_REFLECT_101,
+                                Scalar(), stream);
+                }
 
                 getKeypointsMat(_keypoints, keypoints_, stream);
-                gpu::normalizeSphericalKeypoints(keypoints_, imageSize, resolvedLens, StreamAccessor::getStream(stream));
+                gpu::normalizeSphericalKeypoints(keypoints_, imageSize, resolvedLens, projection, StreamAccessor::getStream(stream));
                 cv::cuda::add(keypoints_, Scalar(HALF_PATCH, HALF_PATCH, 0, 0), keypoints_, noArray(), -1, stream);
 
                 getOutputMat(_descriptors, descriptors_, keypoints_.rows, descriptorSize(), descriptorType());
 
+                SphericalSamplingParams sphericalParams;
+                if (hasValidLens(lens))
+                {
+                        sphericalParams.enabled = 1;
+                        sphericalParams.wrapHorizontal = projection.wrapHorizontal ? 1 : 0;
+                        sphericalParams.padding = HALF_PATCH;
+                        sphericalParams.imageWidth = imageSize.width;
+                        sphericalParams.imageHeight = imageSize.height;
+                        sphericalParams.lens = resolvedLens;
+                        sphericalParams.projection = projection;
+                }
+
                 GpuMat responses = bufResponses_.createMat(keypoints_.rows, 129, CV_32F);
-                gpu::computePatchSIFTs(image_, keypoints_, responses, croppingScale_, 1./6, 1.6, StreamAccessor::getStream(stream));
+                gpu::computePatchSIFTs(image_, keypoints_, responses, croppingScale_, 1./6, 1.6, sphericalParams,
+                        StreamAccessor::getStream(stream));
                 matmulAndSign_(responses, d_bMatrix_, descriptors_, stream);
 
                 if (_descriptors.kind() == _InputArray::KindFlag::MAT)
@@ -313,6 +495,16 @@ Ptr<HashSIFT> HashSIFT::create(float croppingScale, int nbits)
 Ptr<SphericalHashSIFT> SphericalHashSIFT::create(float croppingScale, int nbits, SphericalLensParams lensParams)
 {
         return makePtr<SphericalHashSIFTImpl>(croppingScale, nbits, lensParams);
+}
+
+Ptr<SIFT> SIFT::create(float croppingScale)
+{
+        return makePtr<SIFTImpl>(croppingScale);
+}
+
+Ptr<SphericalSIFT> SphericalSIFT::create(float croppingScale, SphericalLensParams lensParams)
+{
+        return makePtr<SphericalSIFTImpl>(croppingScale, lensParams);
 }
 
 } // namespace cuda

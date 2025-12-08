@@ -15,3 +15,5 @@
 |SphericalHashSIFT256|![SphericalHashSIFT256](images/output/sample01/SphericalHashSIFT256_left_vs_right_matches.jpg)|
 |HashSIFT512|![HashSIFT512](images/output/sample01/HashSIFT512_left_vs_right_matches.jpg)|
 |SphericalHashSIFT512|![SphericalHashSIFT512](images/output/sample01/SphericalHashSIFT512_left_vs_right_matches.jpg)|
+|SIFT128|![SIFT128](images/output/sample01/SIFT128_left_vs_right_matches.jpg)|
+|SphericalSIFT128|![SphericalSIFT128](images/output/sample01/SphericalSIFT128_left_vs_right_matches.jpg)|

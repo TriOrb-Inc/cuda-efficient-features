@@ -25,6 +25,7 @@ limitations under the License.
 #include <device_launch_parameters.h>
 
 #include "cuda_macro.h"
+#include "spherical_sampling.cuh"
 
 namespace cv
 {
@@ -100,7 +101,25 @@ static __device__ inline int blockSize1D()
 	return blockDim.x * blockDim.y;
 }
 
-static __device__ void warpAffineLinear(const PtrStepSzb image, uchar patch[PATCH_W][PATCH_W], const Matx23f& M)
+static __device__ inline float sampleImageBilinear(const PtrStepSzb image, float u, float v)
+{
+        u = fminf(fmaxf(u, 0.f), static_cast<float>(image.cols - 1));
+        v = fminf(fmaxf(v, 0.f), static_cast<float>(image.rows - 1));
+
+        const int ui = floorToInt(u);
+        const int vi = floorToInt(v);
+        const int ui1 = (ui + 1 < image.cols) ? (ui + 1) : (image.cols - 1);
+        const int vi1 = (vi + 1 < image.rows) ? (vi + 1) : (image.rows - 1);
+
+        const float du = u - ui;
+        const float dv = v - vi;
+        const float tmp0 = lerp(image(vi + 0, ui + 0), image(vi + 0, ui1), du);
+        const float tmp1 = lerp(image(vi1, ui + 0), image(vi1, ui1), du);
+        return lerp(tmp0, tmp1, dv);
+}
+
+static __device__ void warpAffineLinear(const PtrStepSzb image, uchar patch[PATCH_W][PATCH_W], const Matx23f& M,
+        const SphericalSamplingParams &params)
 {
 	const float M00 = M(0, 0);
 	const float M01 = M(0, 1);
@@ -116,19 +135,18 @@ static __device__ void warpAffineLinear(const PtrStepSzb image, uchar patch[PATC
 			const float u = M00 * x + M01 * y + M02;
 			const float v = M10 * x + M11 * y + M12;
 
-			uchar dstVal = 0;
-			const int ui = floorToInt(u);
-			const int vi = floorToInt(v);
-			if (ui >= 0 && ui + 1 < image.cols && vi >= 0 && vi + 1 < image.rows)
+			float sx = u;
+			float sy = v;
+			if (params.enabled)
 			{
-				const float du = u - ui;
-				const float dv = v - vi;
-				const float tmp0 = lerp(image(vi + 0, ui + 0), image(vi + 0, ui + 1), du);
-				const float tmp1 = lerp(image(vi + 1, ui + 0), image(vi + 1, ui + 1), du);
-				const float tmp2 = lerp(tmp0, tmp1, dv);
-				dstVal = static_cast<uchar>(::min(static_cast<int>(tmp2 + 0.5f), 255));
+				const float2 mapped = mapToLens(u, v, params);
+				sx = mapped.x;
+				sy = mapped.y;
 			}
-			patch[y][x] = dstVal;
+
+			const float pixel = sampleImageBilinear(image, sx, sy);
+			const int clamped = (static_cast<int>(pixel + 0.5f) < 255) ? static_cast<int>(pixel + 0.5f) : 255;
+			patch[y][x] = static_cast<uchar>((clamped > 0) ? clamped : 0);
 		}
 	}
 }
@@ -154,9 +172,10 @@ static __device__ inline Matx23f getAffineTransform(const KeyPoint& kpt, float s
 	return M;
 }
 
-static __device__ void rectifyPatch(const PtrStepSzb image, const KeyPoint& kpt, uchar patch[PATCH_H][PATCH_W], float scaleFactor)
+static __device__ void rectifyPatch(const PtrStepSzb image, const KeyPoint& kpt, uchar patch[PATCH_H][PATCH_W], float scaleFactor,
+        const SphericalSamplingParams &params)
 {
-	warpAffineLinear(image, patch, getAffineTransform(kpt, scaleFactor));
+	warpAffineLinear(image, patch, getAffineTransform(kpt, scaleFactor), params);
 }
 
 static __device__ inline uchar clip(float x)
@@ -363,7 +382,7 @@ static __device__ void describeFeatureVector(Histogram& hist, float* descriptors
 	const int tid = threadIdx1D();
 	const int blockSize = blockSize1D();
 	for (int i = tid; i < DESCRIPTOR_SIZE; i += blockSize)
-		descriptors[i] = ::min(descriptors[i], MAGNITUDE_TH);
+		descriptors[i] = (descriptors[i] < MAGNITUDE_TH) ? descriptors[i] : MAGNITUDE_TH;
 	__syncthreads();
 
 	normalizeDescriptors(descriptors);
@@ -379,7 +398,7 @@ static __device__ void describeFeatureVector(Histogram& hist, float* descriptors
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 __global__ void computePatchSIFTKernel(const PtrStepSzb image,
 	const PtrStepSz<KeyPoint> keypoints, PtrStepf responses,
-	float croppingScale, float keypointScale, double sigma)
+	float croppingScale, float keypointScale, double sigma, SphericalSamplingParams params)
 {
 	__shared__ uchar patch[PATCH_H][PATCH_W];
 	__shared__ float histbuf[R_BINS + 2][C_BINS + 2][ORI_BINS + 2];
@@ -390,7 +409,7 @@ __global__ void computePatchSIFTKernel(const PtrStepSzb image,
 		return;
 
 	// GaussianBlur(patch, img, Size(), sigma, sigma);
-	rectifyPatch(image, keypoints[ix], patch, croppingScale);
+	rectifyPatch(image, keypoints[ix], patch, croppingScale, params);
 
 	Histogram hist(histbuf, HistBin(PATCH_H, PATCH_W, keypointScale));
 
@@ -438,14 +457,15 @@ __global__ void binarizeDescriptorsKernel(const PtrStepf src, PtrStepSzb dst)
 // Public functions
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 void computePatchSIFTs(const GpuMat& image, const GpuMat& keypoints, GpuMat& responses,
-	float croppingScale, float keypointScale, double sigma, cudaStream_t stream)
+	float croppingScale, float keypointScale, double sigma, SphericalSamplingParams sphericalParams, cudaStream_t stream)
 {
 	const dim3 dimBlock(SIFT_BLOCK_SIZE_X, SIFT_BLOCK_SIZE_Y);
 	const dim3 dimGrid(keypoints.size().height, 1);
 
 	sigma = sqrt(max(sigma * sigma - SIFT_INIT_SIGMA * SIFT_INIT_SIGMA, 0.01));
 
-	computePatchSIFTKernel<<<dimGrid, dimBlock, 0, stream>>>(image, keypoints, responses, croppingScale, keypointScale, sigma);
+	computePatchSIFTKernel<<<dimGrid, dimBlock, 0, stream>>>(image, keypoints, responses, croppingScale, keypointScale, sigma,
+                sphericalParams);
 
 	CUDA_CHECK(cudaGetLastError());
 }

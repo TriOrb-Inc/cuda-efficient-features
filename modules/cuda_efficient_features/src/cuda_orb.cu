@@ -34,6 +34,7 @@ limitations under the License.
 #include <opencv2/cudaimgproc.hpp>
 
 #include "cuda_macro.h"
+#include "spherical_sampling.cuh"
 
 namespace cv
 {
@@ -173,7 +174,7 @@ static __device__ inline void loadPattern(int idx, float &x1, float &y1, float &
 }
 
 __global__ void normalizeSphericalKeypointsKernel(float4 *keypoints, int nkeypoints, int width, int height,
-        SphericalLensParams lens)
+        SphericalLensParams lens, SphericalProjection projection)
 {
         const int idx = static_cast<int>(blockIdx.x * blockDim.x + threadIdx.x);
         if (idx >= nkeypoints)
@@ -191,21 +192,33 @@ __global__ void normalizeSphericalKeypointsKernel(float4 *keypoints, int nkeypoi
         const float theta = nx * radial;
         const float phi = ny * radial;
 
-        float wrappedTheta = fmodf(theta, CV_2PI_F);
-        if (wrappedTheta < 0.f)
-                wrappedTheta += CV_2PI_F;
+        float normalizedTheta = theta - projection.thetaMin;
+        if (projection.wrapHorizontal)
+        {
+                normalizedTheta = fmodf(normalizedTheta, projection.thetaSpan);
+                if (normalizedTheta < 0.f)
+                        normalizedTheta += projection.thetaSpan;
+        }
+        else
+        {
+                normalizedTheta = fminf(projection.thetaSpan, fmaxf(0.f, normalizedTheta));
+        }
 
-        const float clampedPhi = fminf(CV_PI_F * 0.5f, fmaxf(-CV_PI_F * 0.5f, phi));
+        float normalizedPhi = phi - projection.phiMin;
+        normalizedPhi = fminf(projection.phiSpan, fmaxf(0.f, normalizedPhi));
 
-        kp.x = wrappedTheta * static_cast<float>(width) / CV_2PI_F;
-        kp.y = (clampedPhi + (CV_PI_F * 0.5f)) * static_cast<float>(height) / CV_PI_F;
+        const float thetaScale = static_cast<float>(width) / projection.thetaSpan;
+        const float phiScale = static_cast<float>(height) / projection.phiSpan;
+
+        kp.x = normalizedTheta * thetaScale;
+        kp.y = normalizedPhi * phiScale;
 
         keypoints[idx] = kp;
 }
 
 __global__ void computeORBKernel(const int *integral, int integralStep, int width, int height, const float4 *keypoints,
         int nkeypoints, unsigned char *descriptors, int descriptorStep, float scaleFactor, int patternSize, int patchSize,
-        bool wrapHorizontal)
+        bool wrapHorizontal, SphericalSamplingParams sphericalParams)
 {
         const int idx = static_cast<int>(blockIdx.x * blockDim.x + threadIdx.x);
         if (idx >= nkeypoints)
@@ -220,6 +233,9 @@ __global__ void computeORBKernel(const int *integral, int integralStep, int widt
 
         unsigned char *dst = descriptors + idx * descriptorStep;
 
+        const bool sphericalEnabled = sphericalParams.enabled != 0;
+        const bool equiWrap = wrapHorizontal && (sphericalParams.wrapHorizontal != 0) && !sphericalEnabled;
+
         for (int i = 0; i < patternSize; i += 8)
         {
                 unsigned char byte = 0;
@@ -233,8 +249,23 @@ __global__ void computeORBKernel(const int *integral, int integralStep, int widt
                         const float rx2 = kp.x + scale * (cs * px2 - sn * py2);
                         const float ry2 = kp.y + scale * (sn * px2 + cs * py2);
 
-                        const float v1 = sampleBilinear(integral, integralStep, width, height, rx1, ry1, wrapHorizontal);
-                        const float v2 = sampleBilinear(integral, integralStep, width, height, rx2, ry2, wrapHorizontal);
+                        float sampleX1 = rx1;
+                        float sampleY1 = ry1;
+                        float sampleX2 = rx2;
+                        float sampleY2 = ry2;
+
+                        if (sphericalEnabled)
+                        {
+                                const float2 mapped1 = mapToLens(rx1, ry1, sphericalParams);
+                                sampleX1 = mapped1.x;
+                                sampleY1 = mapped1.y;
+                                const float2 mapped2 = mapToLens(rx2, ry2, sphericalParams);
+                                sampleX2 = mapped2.x;
+                                sampleY2 = mapped2.y;
+                        }
+
+                        const float v1 = sampleBilinear(integral, integralStep, width, height, sampleX1, sampleY1, equiWrap);
+                        const float v2 = sampleBilinear(integral, integralStep, width, height, sampleX2, sampleY2, equiWrap);
 
                         byte |= static_cast<unsigned char>((v1 < v2) ? (1u << bit) : 0u);
                 }
@@ -243,7 +274,7 @@ __global__ void computeORBKernel(const int *integral, int integralStep, int widt
 }
 
 void computeORB(const GpuMat &integral, const GpuMat &keypoints, GpuMat &descriptors, float scaleFactor, int paramSize,
-        Size patchSize, bool wrapHorizontal, cudaStream_t stream)
+        Size patchSize, bool wrapHorizontal, const SphericalSamplingParams &sphericalParams, cudaStream_t stream)
 {
         CV_Assert(paramSize <= 256);
 
@@ -257,7 +288,7 @@ void computeORB(const GpuMat &integral, const GpuMat &keypoints, GpuMat &descrip
 
         computeORBKernel<<<grid, block, 0, stream>>>(integral.ptr<int>(), static_cast<int>(integral.step / sizeof(int)),
                 integral.cols - 1, integral.rows - 1, keypoints.ptr<float4>(), keypoints.rows, descriptors.ptr<unsigned char>(),
-                static_cast<int>(descriptors.step), scaleFactor, paramSize, patchSize.width, wrapHorizontal);
+                static_cast<int>(descriptors.step), scaleFactor, paramSize, patchSize.width, wrapHorizontal, sphericalParams);
         CUDA_CHECK(cudaGetLastError());
 
         // 同期 API 呼び出しではデフォルトストリームの完了を待つが、非同期ストリームでは呼び出し元に委ねる
@@ -265,12 +296,13 @@ void computeORB(const GpuMat &integral, const GpuMat &keypoints, GpuMat &descrip
                 CUDA_CHECK(cudaStreamSynchronize(nullptr));
 }
 
-void normalizeSphericalKeypoints(GpuMat &keypoints, Size imageSize, const SphericalLensParams &lensParams, cudaStream_t stream)
+void normalizeSphericalKeypoints(GpuMat &keypoints, Size imageSize, const SphericalLensParams &lensParams,
+        const SphericalProjection &projection, cudaStream_t stream)
 {
         const dim3 block(256);
         const dim3 grid((keypoints.rows + block.x - 1) / block.x);
         normalizeSphericalKeypointsKernel<<<grid, block, 0, stream>>>(keypoints.ptr<float4>(), keypoints.rows, imageSize.width,
-                imageSize.height, lensParams);
+                imageSize.height, lensParams, projection);
 
         CUDA_CHECK(cudaGetLastError());
 

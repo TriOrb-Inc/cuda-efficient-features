@@ -31,7 +31,7 @@ limitations under the License.
 static std::string keys =
 "{ @hpatchs-dir     |   <none> | path to hpatches-release.                   }"
 "{ result-dir       | ./result | path to result.                             }"
-"{ descriptor-type  |        0 | descriptor type(0:BAD 1:HashSIFT 2:SphericalBAD 3:SphericalHashSIFT 4:AKAZE 5:SphericalAKAZE 6:ORB 7:SphericalORB). }"
+"{ descriptor-type  |        0 | descriptor type(0:BAD 1:HashSIFT 2:SphericalBAD 3:SphericalHashSIFT 4:AKAZE 5:SphericalAKAZE 6:ORB 7:SphericalORB 8:SIFT 9:SphericalSIFT). }"
 "{ descriptor-bits  |      256 | descriptor bits(256 or 512).                }"
 "{ compute-angle    |          | compute angles of keypoints.                }"
 "{ help  h          |          | print help message.                         }";
@@ -183,7 +183,8 @@ int main(int argc, char* argv[])
 		std::exit(EXIT_FAILURE);
 	}
 
-    const char* descStr[] = { "BAD", "HashSIFT", "SphericalBAD", "SphericalHashSIFT", "AKAZE", "SphericalAKAZE", "ORB", "SphericalORB" };
+    const char* descStr[] = { "BAD", "HashSIFT", "SphericalBAD", "SphericalHashSIFT", "AKAZE", "SphericalAKAZE", "ORB", "SphericalORB",
+            "SIFT", "SphericalSIFT" };
 
 	std::cout << "=== configulations ===" << std::endl;
 	std::cout << "HPatchs directory : " << hpatchesDir << std::endl;

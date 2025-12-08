@@ -29,6 +29,7 @@ limitations under the License.
 #include <cuda_runtime.h>
 
 #include "../include/cuda_efficient_descriptors.h"
+#include "spherical_projection.hpp"
 
 namespace cv
 {
@@ -38,10 +39,11 @@ namespace cv
 		{
                         void computeORB(const GpuMat &integral, const GpuMat &keypoints, GpuMat &descriptors,
                                                         float scaleFactor, int paramSize, Size patchSize, bool wrapHorizontal,
-                                                        cudaStream_t stream);
+                                                        const SphericalSamplingParams &sphericalParams, cudaStream_t stream);
 
                         void normalizeSphericalKeypoints(GpuMat &keypoints, Size imageSize,
-                                const SphericalLensParams &lensParams, cudaStream_t stream);
+                                const SphericalLensParams &lensParams, const SphericalProjection &projection,
+                                cudaStream_t stream);
 
                         void calcIntegralImage(const GpuMat &src, GpuMat &dst, Stream &stream);
 

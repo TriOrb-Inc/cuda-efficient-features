@@ -22,6 +22,8 @@ limitations under the License.
 #include <opencv2/core/cuda.hpp>
 #include <cuda_runtime.h>
 
+#include "spherical_projection.hpp"
+
 namespace cv
 {
 namespace cuda
@@ -30,7 +32,8 @@ namespace gpu
 {
 
 void computePatchSIFTs(const GpuMat& image, const GpuMat& keypoints, GpuMat& responses,
-	float croppingScale, float keypointScale = 1.f / 6, double sigma = 1.6, cudaStream_t stream = 0);
+	float croppingScale, float keypointScale = 1.f / 6, double sigma = 1.6,
+        SphericalSamplingParams sphericalParams = SphericalSamplingParams(), cudaStream_t stream = 0);
 
 void binarizeDescriptors(const GpuMat& src, GpuMat& dst, cudaStream_t stream = 0);
 

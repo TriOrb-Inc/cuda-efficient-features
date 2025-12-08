@@ -15,6 +15,7 @@ limitations under the License.
 */
 
 #include <cstdlib>
+#include <filesystem>
 #include <iostream>
 #include <set>
 #include <string>
@@ -239,6 +240,39 @@ int main(int argc, char* argv[])
         cv::Mat draw;
         drawMatches(image1, keypoints1, image2, keypoints2, matches, draw);
 
+        const auto exePath = std::filesystem::weakly_canonical(std::filesystem::path(argv[0]));
+
+        const auto resolveOutputDir = [&]() {
+                auto current = exePath.parent_path();
+                std::error_code ec;
+
+                while (true)
+                {
+                        const auto candidate = current / "images" / "output";
+                        if (std::filesystem::exists(candidate, ec) && std::filesystem::is_directory(candidate, ec))
+                        {
+                                return candidate;
+                        }
+
+                        if (!current.has_parent_path() || current.parent_path() == current)
+                        {
+                                break;
+                        }
+
+                        current = current.parent_path();
+                }
+
+                return exePath.parent_path() / "images" / "output";
+        }();
+
+        std::error_code ec;
+        std::filesystem::create_directories(resolveOutputDir, ec);
+        if (ec)
+        {
+                std::cerr << "failed to prepare output directory: " << resolveOutputDir << " (" << ec.message() << ")" << std::endl;
+                std::exit(EXIT_FAILURE);
+        }
+
         const auto makeOutputPath = [&](const std::string& lhs, const std::string& rhs) {
                 const auto basename = [](const std::string& path) {
                         const auto pos = path.find_last_of("/\\");
@@ -253,7 +287,7 @@ int main(int argc, char* argv[])
                 const auto lhsStem = stem(basename(lhs));
                 const auto rhsStem = stem(basename(rhs));
                 const auto prefix = std::string(descriptorTypeName(descType)) + std::to_string(descBits) + "_";
-                return prefix + lhsStem + "_vs_" + rhsStem + "_matches.jpg";
+                return (resolveOutputDir / (prefix + lhsStem + "_vs_" + rhsStem + "_matches.jpg")).string();
         };
 
         if (noGui || std::getenv("DISPLAY") == nullptr)

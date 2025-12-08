@@ -286,6 +286,25 @@ int main(int argc, char* argv[])
         cv::Mat draw;
         drawMatches(image1, keypoints1, image2, keypoints2, matches, draw);
 
+        const auto putOverlayText = [&](cv::Mat& img) {
+                const int margin = 12;
+                const double fontScale = 0.7;
+                const int thickness = 2;
+                const cv::Scalar textColor(255, 255, 255);
+                const cv::Scalar shadowColor(0, 0, 0);
+
+                const auto drawTextLine = [&](const std::string& text, int line) {
+                        const cv::Point org(margin, margin + (line + 1) * 24);
+                        cv::putText(img, text, org + cv::Point(1, 1), cv::FONT_HERSHEY_SIMPLEX, fontScale, shadowColor, thickness, cv::LINE_AA);
+                        cv::putText(img, text, org, cv::FONT_HERSHEY_SIMPLEX, fontScale, textColor, thickness, cv::LINE_AA);
+                };
+
+                drawTextLine("Keypoints: " + std::to_string(keypoints1.size()) + " / " + std::to_string(keypoints2.size()), 0);
+                drawTextLine("Inliers: " + std::to_string(matches.size()), 1);
+        };
+
+        putOverlayText(draw);
+
         const auto exePath = std::filesystem::weakly_canonical(std::filesystem::path(argv[0]));
 
         const auto resolveOutputDir = [&]() {

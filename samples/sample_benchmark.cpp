@@ -31,7 +31,7 @@ static std::string keys =
 "{ fast-threshold  |     20 | FAST threshold.                                                    }"
 "{ num-levels      |      8 | number of pyramid levels.                                          }"
 "{ nonmax-radius   |     15 | radius of non-maximum suppression.                                 }"
-"{ descriptor-type |      0 | descriptor type(0:BAD 1:HashSIFT 2:SphericalBAD 3:SphericalHashSIFT 4:AKAZE 5:SphericalAKAZE 6:ORB 7:SphericalORB).               }"
+"{ descriptor-type |      0 | descriptor type(0:BAD 1:HashSIFT 2:SphericalBAD 3:SphericalHashSIFT 4:AKAZE 5:SphericalAKAZE 6:ORB 7:SphericalORB 8:SIFT 9:SphericalSIFT).               }"
 "{ descriptor-bits |    256 | descriptor bits(256 or 512).                                       }"
 "{ benchmark-type  |      0 | benchmark type(0:detect-and-compute 1:detect-only 2:compute-only). }"
 "{ num-iterations  |    100 | number of iterations for benchmark .                               }"

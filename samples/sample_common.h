@@ -27,7 +27,9 @@ enum SampleDescriptorType{ BAD,
        AKAZE,
        SphericalAKAZE,
        ORB,
-       SphericalORB };
+       SphericalORB,
+       SIFT,
+       SphericalSIFT };
 
 cv::cuda::EfficientFeatures::DescriptorType getDescriptorType(int descType, int descBits);
 int sanitizeDescriptorType(int descType);

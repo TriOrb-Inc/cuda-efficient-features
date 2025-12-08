@@ -53,12 +53,21 @@ cv::cuda::EfficientFeatures::DescriptorType getDescriptorType(int descType, int 
         if (descType == SampleDescriptorType::SphericalORB)
                 return EfficientFeatures::SPHERICAL_ORB;
 
+        if (descType == SampleDescriptorType::SIFT)
+                return EfficientFeatures::SIFT;
+
+        if (descType == SampleDescriptorType::SphericalSIFT)
+                return EfficientFeatures::SPHERICAL_SIFT;
+
         return EfficientFeatures::HASH_SIFT_256;
 }
 
 int normalizeDescriptorBits(int descType, int descBits)
 {
         descType = sanitizeDescriptorType(descType);
+
+        if (descType == SampleDescriptorType::SIFT || descType == SampleDescriptorType::SphericalSIFT)
+                return 128;
 
         const int sanitized = descBits == 512 ? 512 : 256;
 
@@ -73,9 +82,9 @@ int normalizeDescriptorBits(int descType, int descBits)
 
 int sanitizeDescriptorType(int descType)
 {
-        if (descType < SampleDescriptorType::BAD || descType > SampleDescriptorType::SphericalORB)
+        if (descType < SampleDescriptorType::BAD || descType > SampleDescriptorType::SphericalSIFT)
         {
-                std::cerr << "descriptor-type must be between 0 and 7. Fallback to BAD." << std::endl;
+                std::cerr << "descriptor-type must be between 0 and 9. Fallback to BAD." << std::endl;
                 return SampleDescriptorType::BAD;
         }
 
@@ -85,7 +94,7 @@ int sanitizeDescriptorType(int descType)
 const char* descriptorTypeName(int descType)
 {
         static const char* descStr[] = { "BAD", "HashSIFT", "SphericalBAD", "SphericalHashSIFT", "AKAZE", "SphericalAKAZE", "ORB",
-                "SphericalORB" };
+                "SphericalORB", "SIFT", "SphericalSIFT" };
 
         return descStr[sanitizeDescriptorType(descType)];
 }

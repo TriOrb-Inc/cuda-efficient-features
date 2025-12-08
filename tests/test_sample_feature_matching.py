@@ -22,7 +22,7 @@ def sample_feature_matching_binary():
 
 
 def _descriptor_params():
-    for desc_type in range(8):
+    for desc_type in range(10):
         for desc_bits in (256, 512):
             yield desc_type, desc_bits
 

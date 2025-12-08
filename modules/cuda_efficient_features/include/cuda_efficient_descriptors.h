@@ -165,6 +165,28 @@ public:
                 SphericalLensParams lensParams = {});
 };
 
+class SIFT : public EfficientDescriptorsAsync
+{
+public:
+        /** @brief Creates the floating point SIFT descriptor.
+        @param croppingScale Determines the size of the patch cropped for description. The diameter of
+        the patch will be: croppingScale * kp.size.
+         */
+        static Ptr<SIFT> create(float croppingScale);
+};
+
+class SphericalSIFT : public EfficientDescriptorsAsync
+{
+public:
+        /** @brief Creates the spherical-aware SIFT descriptor with horizontal wrapping.
+        @param croppingScale Determines the size of the patch cropped for description. The diameter of
+        the patch will be: croppingScale * kp.size.
+        @param lensParams Lens parameters for spherical projection. If fx/fy are 0, the implementation
+        falls back to an equirectangular assumption derived from the input image size.
+         */
+        static Ptr<SphericalSIFT> create(float croppingScale, SphericalLensParams lensParams = {});
+};
+
 class AKAZE : public EfficientDescriptorsAsync
 {
 public:

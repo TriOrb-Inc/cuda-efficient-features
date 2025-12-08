@@ -30,6 +30,7 @@ limitations under the License.
 #include "cuda_efficient_features_internal.h"
 #include "cuda_orb_internal.h"
 #include "device_buffer.h"
+#include "spherical_projection.hpp"
 
 namespace cv
 {
@@ -110,25 +111,49 @@ namespace
 
                 const Size imageSize = _image.size();
                 const SphericalLensParams resolvedLens = scaleLensForImage(lens, imageSize, lensBaseSize);
+                const SphericalProjection projection = buildSphericalProjection(resolvedLens, imageSize);
 
                 getInputMat(_image, buffers.image, stream);
 
                 if constexpr (WrapHorizontal)
                 {
-                        GpuMat horizontalWrapped;
-                        cv::cuda::copyMakeBorder(buffers.image, horizontalWrapped, 0, 0, HALF_PATCH, HALF_PATCH, BORDER_WRAP,
-                                Scalar(), stream);
-                        cv::cuda::copyMakeBorder(horizontalWrapped, buffers.image, HALF_PATCH, HALF_PATCH, 0, 0,
-                                BORDER_REFLECT_101, Scalar(), stream);
+                        if (projection.wrapHorizontal)
+                        {
+                                GpuMat horizontalWrapped;
+                                cv::cuda::copyMakeBorder(buffers.image, horizontalWrapped, 0, 0, HALF_PATCH, HALF_PATCH,
+                                        BORDER_WRAP, Scalar(), stream);
+                                cv::cuda::copyMakeBorder(horizontalWrapped, buffers.image, HALF_PATCH, HALF_PATCH, 0, 0,
+                                        BORDER_REFLECT_101, Scalar(), stream);
+                        }
+                        else
+                        {
+                                cv::cuda::copyMakeBorder(buffers.image, buffers.image, HALF_PATCH, HALF_PATCH, HALF_PATCH,
+                                        HALF_PATCH, BORDER_REFLECT_101, Scalar(), stream);
+                        }
                 }
 
                 gpu::calcIntegralImage(buffers.image, buffers.integral, stream);
+
+                SphericalSamplingParams sphericalParams;
+                if constexpr (WrapHorizontal)
+                {
+                        if (hasValidLens(lens))
+                        {
+                                sphericalParams.enabled = 1;
+                                sphericalParams.wrapHorizontal = projection.wrapHorizontal ? 1 : 0;
+                                sphericalParams.padding = HALF_PATCH;
+                                sphericalParams.imageWidth = imageSize.width;
+                                sphericalParams.imageHeight = imageSize.height;
+                                sphericalParams.lens = resolvedLens;
+                                sphericalParams.projection = projection;
+                        }
+                }
 
                 getKeypointsMat(_keypoints, buffers.keypoints, stream);
 
                 if constexpr (WrapHorizontal)
                 {
-                        gpu::normalizeSphericalKeypoints(buffers.keypoints, imageSize, resolvedLens,
+                        gpu::normalizeSphericalKeypoints(buffers.keypoints, imageSize, resolvedLens, projection,
                                 StreamAccessor::getStream(stream));
                         cv::cuda::add(buffers.keypoints, Scalar(HALF_PATCH, HALF_PATCH, 0, 0), buffers.keypoints, noArray(), -1,
                                 stream);
@@ -136,8 +161,8 @@ namespace
 
                 getOutputMat(_descriptors, buffers.descriptors, buffers.keypoints.rows, paramSize / 8, CV_8U);
 
-                gpu::computeBAD(buffers.integral, buffers.keypoints, buffers.descriptors, scaleFactor, paramSize, patchSize,
-                        StreamAccessor::getStream(stream));
+                gpu::computeBAD(buffers.image, buffers.integral, buffers.keypoints, buffers.descriptors, scaleFactor,
+                        paramSize, patchSize, sphericalParams, StreamAccessor::getStream(stream));
 
                 if (_descriptors.kind() == _InputArray::KindFlag::MAT)
                         buffers.descriptors.download(_descriptors);
@@ -174,7 +199,9 @@ public:
 
 		integral_ = buf_.createMat(image_.rows + 1, image_.cols + 1, CV_32S);
 		gpu::calcIntegralImage(image_, integral_, stream);
-		gpu::computeBAD(integral_, keypoints_, descriptors_, scaleFactor_, paramSize_, patchSize_, StreamAccessor::getStream(stream));
+		SphericalSamplingParams params;
+		gpu::computeBAD(image_, integral_, keypoints_, descriptors_, scaleFactor_, paramSize_, patchSize_,
+                        params, StreamAccessor::getStream(stream));
 
 		if (_descriptors.kind() == _InputArray::KindFlag::MAT)
 			descriptors_.download(_descriptors);

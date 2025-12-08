@@ -39,7 +39,7 @@ static std::string keys =
 "{ max-keypoints   |  10000 | maximum number of keypoints.                }"
 "{ fast-threshold  |     20 | FAST threshold.                             }"
 "{ nonmax-radius   |     15 | radius of non-maximum suppression.          }"
-"{ descriptor-type |      0 | descriptor type(0:BAD 1:HashSIFT 2:SphericalBAD 3:SphericalHashSIFT 4:AKAZE 5:SphericalAKAZE 6:ORB 7:SphericalORB). }"
+"{ descriptor-type |      0 | descriptor type(0:BAD 1:HashSIFT 2:SphericalBAD 3:SphericalHashSIFT 4:AKAZE 5:SphericalAKAZE 6:ORB 7:SphericalORB 8:SIFT 9:SphericalSIFT). }"
 "{ descriptor-bits |    256 | descriptor bits(256 or 512).                }"
 "{ fx             |      0 | horizontal focal length for spherical descriptors.     }"
 "{ fy             |      0 | vertical focal length for spherical descriptors.       }"
@@ -415,7 +415,10 @@ int main(int argc, char* argv[])
 
                 // match features
                 std::cout << "=== match features ===" << std::endl;
-                auto matcher = cv::BFMatcher::create(cv::NORM_HAMMING, false);
+                const bool isFloatDescriptor = descType == SampleDescriptorType::SIFT
+                        || descType == SampleDescriptorType::SphericalSIFT;
+                auto matcher = cv::BFMatcher::create(isFloatDescriptor ? cv::NORM_L2 : cv::NORM_HAMMING, false);
+                std::cout << "using " << (isFloatDescriptor ? "L2" : "Hamming") << " distance for matching." << std::endl;
 
                 std::vector<std::vector<cv::DMatch>> knnMatches;
                 matcher->knnMatch(descriptors1, descriptors2, knnMatches, 2);

@@ -21,6 +21,7 @@ limitations under the License.
 */
 
 #include "cuda_efficient_descriptors.h"
+#include "spherical_projection.hpp"
 
 #include <opencv2/core/cuda_stream_accessor.hpp>
 #include <opencv2/features2d.hpp>
@@ -92,29 +93,37 @@ namespace cuda
                         return resolved;
                 }
 
-                inline Point2f toEquirectangular(const Point2f& pt, const Size& imageSize, const SphericalLensParams& lens)
+                inline Point2f toEquirectangular(const Point2f& pt, const Size& imageSize, const SphericalLensParams& lens,
+                        const SphericalProjection& projection)
                 {
-                        constexpr float TWO_PI = 6.2831853071795864769f;
-                        constexpr float HALF_PI = 1.5707963267948966192f;
-
                         const float nx = (pt.x - lens.cx) / lens.fx;
                         const float ny = (pt.y - lens.cy) / lens.fy;
 
                         const float r2 = nx * nx + ny * ny;
-                        const float radial = 1.f + lens.k1 * r2 + lens.k2 * r2 * r2 + lens.k3 * r2 * r2 * r2 + lens.k4 * r2 * r2 * r2 * r2;
+                        const float radial = 1.f + lens.k1 * r2 + lens.k2 * r2 * r2 + lens.k3 * r2 * r2 * r2 +
+                                lens.k4 * r2 * r2 * r2 * r2;
 
                         const float theta = nx * radial;
                         const float phi = ny * radial;
 
-                        float wrappedTheta = std::fmod(theta, TWO_PI);
-                        if (wrappedTheta < 0.f)
-                                wrappedTheta += TWO_PI;
+                        float normalizedTheta = theta - projection.thetaMin;
+                        if (projection.wrapHorizontal)
+                        {
+                                normalizedTheta = std::fmod(normalizedTheta, projection.thetaSpan);
+                                if (normalizedTheta < 0.f)
+                                        normalizedTheta += projection.thetaSpan;
+                        }
+                        else
+                        {
+                                normalizedTheta = std::min(projection.thetaSpan, std::max(0.f, normalizedTheta));
+                        }
 
-                        const float clampedPhi = std::max(-HALF_PI, std::min(HALF_PI, phi));
+                        float normalizedPhi = phi - projection.phiMin;
+                        normalizedPhi = std::min(projection.phiSpan, std::max(0.f, normalizedPhi));
 
-                        const float x = wrappedTheta * static_cast<float>(imageSize.width) / TWO_PI;
-                        const float y = (clampedPhi + HALF_PI) * static_cast<float>(imageSize.height) / (2.f * HALF_PI);
-                        return Point2f(x, y);
+                        const float thetaScale = static_cast<float>(imageSize.width) / projection.thetaSpan;
+                        const float phiScale = static_cast<float>(imageSize.height) / projection.phiSpan;
+                        return Point2f(normalizedTheta * thetaScale, normalizedPhi * phiScale);
                 }
 
                 Mat downloadImage(InputArray image, Stream& stream)
@@ -246,16 +255,23 @@ namespace cuda
                         CV_Assert(hostImage.type() == CV_8U);
 
                         Mat padded;
-                        copyMakeBorder(hostImage, padded, 0, 0, HALF_PATCH, HALF_PATCH, BORDER_WRAP);
-                        copyMakeBorder(padded, padded, HALF_PATCH, HALF_PATCH, 0, 0, BORDER_REFLECT_101);
+                        const SphericalLensParams lens = scaleLensForImage(lensParams_, hostImage.size(), lensBaseSize_);
+                        const SphericalProjection projection = buildSphericalProjection(lens, hostImage.size());
+                        if (projection.wrapHorizontal)
+                        {
+                                copyMakeBorder(hostImage, padded, 0, 0, HALF_PATCH, HALF_PATCH, BORDER_WRAP);
+                                copyMakeBorder(padded, padded, HALF_PATCH, HALF_PATCH, 0, 0, BORDER_REFLECT_101);
+                        }
+                        else
+                        {
+                                copyMakeBorder(hostImage, padded, HALF_PATCH, HALF_PATCH, HALF_PATCH, HALF_PATCH, BORDER_REFLECT_101);
+                        }
 
                         std::vector<KeyPoint> adjusted = keypoints;
                         applyScale(adjusted, scaleFactor_);
 
-                        const SphericalLensParams lens = scaleLensForImage(lensParams_, hostImage.size(), lensBaseSize_);
-
                         for (auto& kpt : adjusted)
-                                kpt.pt = toEquirectangular(kpt.pt, hostImage.size(), lens) +
+                                kpt.pt = toEquirectangular(kpt.pt, hostImage.size(), lens, projection) +
                                         Point2f(static_cast<float>(HALF_PATCH), static_cast<float>(HALF_PATCH));
 
                         akaze_->compute(padded, adjusted, descriptors);
@@ -281,13 +297,20 @@ namespace cuda
                         CV_Assert(hostImage.type() == CV_8U);
 
                         Mat padded;
-                        copyMakeBorder(hostImage, padded, 0, 0, HALF_PATCH, HALF_PATCH, BORDER_WRAP);
-                        copyMakeBorder(padded, padded, HALF_PATCH, HALF_PATCH, 0, 0, BORDER_REFLECT_101);
-
                         const SphericalLensParams lens = scaleLensForImage(lensParams_, hostImage.size(), lensBaseSize_);
+                        const SphericalProjection projection = buildSphericalProjection(lens, hostImage.size());
+                        if (projection.wrapHorizontal)
+                        {
+                                copyMakeBorder(hostImage, padded, 0, 0, HALF_PATCH, HALF_PATCH, BORDER_WRAP);
+                                copyMakeBorder(padded, padded, HALF_PATCH, HALF_PATCH, 0, 0, BORDER_REFLECT_101);
+                        }
+                        else
+                        {
+                                copyMakeBorder(hostImage, padded, HALF_PATCH, HALF_PATCH, HALF_PATCH, HALF_PATCH, BORDER_REFLECT_101);
+                        }
 
                         for (auto& kpt : hostKeypoints)
-                                kpt.pt = toEquirectangular(kpt.pt, hostImage.size(), lens) +
+                                kpt.pt = toEquirectangular(kpt.pt, hostImage.size(), lens, projection) +
                                         Point2f(static_cast<float>(HALF_PATCH), static_cast<float>(HALF_PATCH));
 
                         Mat hostDescriptors;

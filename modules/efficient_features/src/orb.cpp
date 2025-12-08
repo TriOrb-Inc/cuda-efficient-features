@@ -30,6 +30,8 @@ limitations under the License.
 #include <opencv2/features2d.hpp>
 #include <opencv2/imgproc.hpp>
 
+#include "spherical_projection.hpp"
+
 #include <algorithm>
 #include <cmath>
 #include <vector>
@@ -101,11 +103,9 @@ namespace cv
                 return resolved;
         }
 
-                inline Point2f toEquirectangular(const Point2f& pt, const Size& imageSize, const SphericalLensParams& lens)
+                inline Point2f toEquirectangular(const Point2f& pt, const Size& imageSize, const SphericalLensParams& lens,
+                        const SphericalProjection& projection)
                 {
-                        constexpr float TWO_PI = 6.2831853071795864769f;
-                        constexpr float HALF_PI = 1.5707963267948966192f;
-
                         const float nx = (pt.x - lens.cx) / lens.fx;
                         const float ny = (pt.y - lens.cy) / lens.fy;
 
@@ -116,15 +116,24 @@ namespace cv
                         const float theta = nx * radial;
                         const float phi = ny * radial;
 
-                        float wrappedTheta = std::fmod(theta, TWO_PI);
-                        if (wrappedTheta < 0.f)
-                                wrappedTheta += TWO_PI;
+                        float normalizedTheta = theta - projection.thetaMin;
+                        if (projection.wrapHorizontal)
+                        {
+                                normalizedTheta = std::fmod(normalizedTheta, projection.thetaSpan);
+                                if (normalizedTheta < 0.f)
+                                        normalizedTheta += projection.thetaSpan;
+                        }
+                        else
+                        {
+                                normalizedTheta = std::min(projection.thetaSpan, std::max(0.f, normalizedTheta));
+                        }
 
-                        const float clampedPhi = std::max(-HALF_PI, std::min(HALF_PI, phi));
+                        float normalizedPhi = phi - projection.phiMin;
+                        normalizedPhi = std::min(projection.phiSpan, std::max(0.f, normalizedPhi));
 
-                        const float x = wrappedTheta * static_cast<float>(imageSize.width) / TWO_PI;
-                        const float y = (clampedPhi + HALF_PI) * static_cast<float>(imageSize.height) / (2.f * HALF_PI);
-                        return Point2f(x, y);
+                        const float thetaScale = static_cast<float>(imageSize.width) / projection.thetaSpan;
+                        const float phiScale = static_cast<float>(imageSize.height) / projection.phiSpan;
+                        return Point2f(normalizedTheta * thetaScale, normalizedPhi * phiScale);
                 }
         } // namespace
 
@@ -187,16 +196,24 @@ namespace cv
 
                         Mat padded;
                         const Mat imageMat = image.getMat();
-                        cv::copyMakeBorder(imageMat, padded, 0, 0, HALF_PATCH, HALF_PATCH, BORDER_WRAP);
-                        cv::copyMakeBorder(padded, padded, HALF_PATCH, HALF_PATCH, 0, 0, BORDER_REFLECT_101);
+                        const SphericalLensParams lens = scaleLensForImage(lens_params_, imageMat.size(), lens_base_size_);
+                        const SphericalProjection projection = buildSphericalProjection(lens, imageMat.size());
+                        if (projection.wrapHorizontal)
+                        {
+                                cv::copyMakeBorder(imageMat, padded, 0, 0, HALF_PATCH, HALF_PATCH, BORDER_WRAP);
+                                cv::copyMakeBorder(padded, padded, HALF_PATCH, HALF_PATCH, 0, 0, BORDER_REFLECT_101);
+                        }
+                        else
+                        {
+                                cv::copyMakeBorder(imageMat, padded, HALF_PATCH, HALF_PATCH, HALF_PATCH, HALF_PATCH,
+                                        BORDER_REFLECT_101);
+                        }
 
                         std::vector<KeyPoint> scaled = keypoints;
                         applyScale(scaled, scale_factor_);
 
-                        const SphericalLensParams lens = scaleLensForImage(lens_params_, imageMat.size(), lens_base_size_);
-
                         for (auto& kpt : scaled)
-                                kpt.pt = toEquirectangular(kpt.pt, imageMat.size(), lens);
+                                kpt.pt = toEquirectangular(kpt.pt, imageMat.size(), lens, projection);
 
                         shiftKeypoints(scaled, Point2f(static_cast<float>(HALF_PATCH), static_cast<float>(HALF_PATCH)));
 

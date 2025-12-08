@@ -99,6 +99,12 @@ static Ptr<EfficientDescriptorsAsync> createDescriber(
         case EfficientFeatures::SPHERICAL_ORB:
                 return cuda::SphericalORB::create(1, lensParams);
                 break;
+        case EfficientFeatures::SIFT:
+                return cuda::SIFT::create(1);
+                break;
+        case EfficientFeatures::SPHERICAL_SIFT:
+                return cuda::SphericalSIFT::create(1, lensParams);
+                break;
         default:
                 return nullptr;
         }

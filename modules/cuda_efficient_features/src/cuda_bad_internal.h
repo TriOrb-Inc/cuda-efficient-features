@@ -22,6 +22,8 @@ limitations under the License.
 #include <opencv2/core/cuda.hpp>
 #include <cuda_runtime.h>
 
+#include "spherical_projection.hpp"
+
 namespace cv
 {
 namespace cuda
@@ -37,8 +39,9 @@ struct BoxPairParams
 
 void loadBoxPairParams(int paramSize);
 
-void computeBAD(const GpuMat& integral, const GpuMat& keypoints, GpuMat& descriptors,
-	float scaleFactor, int paramSize, Size patchSize, cudaStream_t stream);
+void computeBAD(const GpuMat& image, const GpuMat& integral, const GpuMat& keypoints, GpuMat& descriptors,
+	float scaleFactor, int paramSize, Size patchSize, const SphericalSamplingParams& sphericalParams,
+        cudaStream_t stream);
 
 void calcIntegralImage(const GpuMat& src, GpuMat& dst, Stream& stream);
 

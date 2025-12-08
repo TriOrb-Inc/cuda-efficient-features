@@ -20,7 +20,7 @@ limitations under the License.
 #include <opencv2/core.hpp>
 #include <cuda_efficient_features.h>
 
-enum { BAD,
+enum SampleDescriptorType{ BAD,
        HashSIFT,
        SphericalBAD,
        SphericalHashSIFT,

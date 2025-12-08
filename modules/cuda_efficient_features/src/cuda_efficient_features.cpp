@@ -412,20 +412,14 @@ public:
 	void setNonmaxRadius(int nonmaxRadius) { nonmaxRadius_ = nonmaxRadius; }
 	int getNonmaxRadius() const { return nonmaxRadius_; }
 
-        void setDescriptorType(DescriptorType descriptorType)
-        {
-                descriptorType_ = descriptorType;
-                describer_ = createDescriber(descriptorType, lensParams_);
-        }
+	void setDescriptorType(DescriptorType descriptorType, const SphericalLensParams& params)
+	{
+			descriptorType_ = descriptorType;
+			lensParams_ = params;
+			describer_ = createDescriber(descriptorType, lensParams_);
+	}
 
-        void setSphericalLensParams(const SphericalLensParams& params)
-        {
-                lensParams_ = params;
-                describer_ = createDescriber(descriptorType_, lensParams_);
-        }
-
-        SphericalLensParams getSphericalLensParams() const { return lensParams_; }
-
+	SphericalLensParams getSphericalLensParams() const { return lensParams_; }
 	DescriptorType getDescriptorType() const { return descriptorType_; }
 
 private:

@@ -352,8 +352,7 @@ int main(int argc, char* argv[])
         auto feature = cv::cuda::EfficientFeatures::create(nfeatures);
         feature->setFastThreshold(fastThreshold);
         feature->setNonmaxRadius(nonmaxRadius);
-        feature->setDescriptorType(getDescriptorType(descType, descBits));
-        feature->setSphericalLensParams(lensParams);
+        feature->setDescriptorType(getDescriptorType(descType, descBits), lensParams);
 
         const auto needsClassId = descType == AKAZE || descType == SphericalAKAZE;
         const auto assignClassIdIfNeeded = [&](std::vector<cv::KeyPoint>& keypoints) {
@@ -385,11 +384,16 @@ int main(int argc, char* argv[])
                 }
 
                 std::cout << "=== configulations ===" << std::endl;
-                std::cout << "dataset         : " << dataset.name << std::endl;
-                std::cout << "image size      : " << image1.size() << " and " << image2.size() << std::endl;
-                std::cout << "descriptor type : " << descriptorTypeName(descType) << std::endl;
-                std::cout << "descriptor bits : " << descBits << std::endl;
-                std::cout << "max keypoints   : " << nfeatures << std::endl;
+                std::cout << "dataset          : " << dataset.name << std::endl;
+                std::cout << "image size       : " << image1.size() << " and " << image2.size() << std::endl;
+                std::cout << "descriptor type  : " << descriptorTypeName(descType) << std::endl;
+                std::cout << "descriptor bits  : " << descBits << std::endl;
+                std::cout << "max keypoints    : " << nfeatures << std::endl;
+                std::cout << "camera parameters: "
+                          << "fx=" << lensParams.fx << ", fy=" << lensParams.fy
+                          << ", cx=" << lensParams.cx << ", cy=" << lensParams.cy
+                          << ", k1=" << lensParams.k1 << ", k2=" << lensParams.k2
+                          << ", k3=" << lensParams.k3 << ", k4=" << lensParams.k4 << std::endl;
                 std::cout << std::endl;
 
                 cv::Mat gray1, gray2;

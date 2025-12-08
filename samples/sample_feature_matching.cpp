@@ -14,6 +14,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
+#include <algorithm>
 #include <cstdlib>
 #include <filesystem>
 #include <iostream>
@@ -186,7 +187,8 @@ int main(int argc, char* argv[])
         matcher->knnMatch(descriptors1, descriptors2, knnMatches, 2);
 
         // ratio test to reject ambiguous correspondences
-        constexpr float ratioThreshold = 0.75f;
+        // A slightly looser ratio threshold gives RANSAC more candidates to work with.
+        constexpr float ratioThreshold = 0.80f;
         std::vector<cv::DMatch> goodMatches;
         goodMatches.reserve(knnMatches.size());
         for (const auto& m : knnMatches)
@@ -214,14 +216,36 @@ int main(int argc, char* argv[])
                         pts2.emplace_back(keypoints2[match.trainIdx].pt);
                 }
 
-                std::vector<unsigned char> inliersMask;
-                const cv::Mat H = cv::findHomography(pts1, pts2, cv::RANSAC, 3.0, inliersMask);
-                if (!H.empty())
+                auto runRansac = [&](double reprojectionThreshold) {
+                        std::vector<unsigned char> inliersMask;
+                        const cv::Mat H = cv::findHomography(
+                                pts1, pts2, cv::RANSAC, reprojectionThreshold, inliersMask, 5000, 0.999);
+                        return std::make_pair(H, std::move(inliersMask));
+                };
+
+                std::vector<unsigned char> bestMask;
+                size_t bestInliers = 0;
+
+                for (const double reproj : {3.0, 5.0, 8.0})
+                {
+                        auto [H, inliersMask] = runRansac(reproj);
+                        if (H.empty())
+                                continue;
+
+                        const auto inliers = std::count(inliersMask.begin(), inliersMask.end(), 1);
+                        if (inliers > bestInliers)
+                        {
+                                bestInliers = static_cast<size_t>(inliers);
+                                bestMask = std::move(inliersMask);
+                        }
+                }
+
+                if (!bestMask.empty())
                 {
                         matches.reserve(goodMatches.size());
                         for (size_t i = 0; i < goodMatches.size(); ++i)
                         {
-                                if (inliersMask[i])
+                                if (bestMask[i])
                                 {
                                         matches.emplace_back(goodMatches[i]);
                                 }

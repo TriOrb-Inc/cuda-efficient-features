@@ -19,6 +19,7 @@ limitations under the License.
 #include <set>
 #include <string>
 
+#include <opencv2/calib3d.hpp>
 #include <opencv2/core.hpp>
 #include <opencv2/imgproc.hpp>
 #include <opencv2/highgui.hpp>
@@ -178,9 +179,59 @@ int main(int argc, char* argv[])
 
         // match features
         std::cout << "=== match features ===" << std::endl;
-        auto matcher = cv::BFMatcher::create(cv::NORM_HAMMING, true);
+        auto matcher = cv::BFMatcher::create(cv::NORM_HAMMING, false);
+
+        std::vector<std::vector<cv::DMatch>> knnMatches;
+        matcher->knnMatch(descriptors1, descriptors2, knnMatches, 2);
+
+        // ratio test to reject ambiguous correspondences
+        constexpr float ratioThreshold = 0.75f;
+        std::vector<cv::DMatch> goodMatches;
+        goodMatches.reserve(knnMatches.size());
+        for (const auto& m : knnMatches)
+        {
+                if (m.size() < 2)
+                        continue;
+
+                if (m[0].distance < ratioThreshold * m[1].distance)
+                {
+                        goodMatches.emplace_back(m[0]);
+                }
+        }
+
+        // geometric verification with RANSAC
         std::vector<cv::DMatch> matches;
-        matcher->match(descriptors1, descriptors2, matches);
+        if (goodMatches.size() >= 4)
+        {
+                std::vector<cv::Point2f> pts1, pts2;
+                pts1.reserve(goodMatches.size());
+                pts2.reserve(goodMatches.size());
+
+                for (const auto& match : goodMatches)
+                {
+                        pts1.emplace_back(keypoints1[match.queryIdx].pt);
+                        pts2.emplace_back(keypoints2[match.trainIdx].pt);
+                }
+
+                std::vector<unsigned char> inliersMask;
+                const cv::Mat H = cv::findHomography(pts1, pts2, cv::RANSAC, 3.0, inliersMask);
+                if (!H.empty())
+                {
+                        matches.reserve(goodMatches.size());
+                        for (size_t i = 0; i < goodMatches.size(); ++i)
+                        {
+                                if (inliersMask[i])
+                                {
+                                        matches.emplace_back(goodMatches[i]);
+                                }
+                        }
+                }
+        }
+
+        if (matches.empty())
+        {
+                matches = std::move(goodMatches);
+        }
 
         std::cout << "number of matches: " << matches.size() << std::endl;
 

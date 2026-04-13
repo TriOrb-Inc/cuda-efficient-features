@@ -86,6 +86,11 @@ public:
 	virtual void detectAndComputeAsync(InputArray image, InputArray mask, OutputArray keypoints, OutputArray descriptors,
 		bool useProvidedKeypoints = false, Stream& stream = Stream::Null()) = 0;
 
+	/** Detects keypoints and computes descriptors per channel for multi-channel input. */
+	virtual void detectAndComputeAsyncPerChannel(InputArray image, InputArray mask,
+		std::vector<GpuMat>& keypoints, std::vector<GpuMat>& descriptors,
+		bool useProvidedKeypoints = false, Stream& stream = Stream::Null()) = 0;
+
 	/** Converts keypoints array from internal representation to standard vector. */
 	virtual void convert(InputArray gpu_keypoints, std::vector<KeyPoint>& keypoints) = 0;
 

@@ -35,6 +35,19 @@ struct SphericalLensParams
 };
 
 /**
+ * @brief Detects keypoints and computes descriptors per channel for multi-channel input.
+ * @param feature Feature2D implementation used for detectAndCompute.
+ * @param image Input image (single or multi-channel).
+ * @param mask Optional mask for keypoint detection (single-channel 8-bit).
+ * @param keypoints Output keypoints per channel.
+ * @param descriptors Output descriptors per channel.
+ * @param useProvidedKeypoints If true, provided keypoints are used as input.
+ */
+CV_EXPORTS_W void detectAndComputePerChannel(const Ptr<Feature2D>& feature, InputArray image, InputArray mask,
+        std::vector<std::vector<KeyPoint>>& keypoints, std::vector<Mat>& descriptors,
+        bool useProvidedKeypoints = false);
+
+/**
  * Implementation of the Box Average Difference (BAD) descriptor. The method uses features
  * computed from the difference of the average gray values of two boxes in the patch.
  *

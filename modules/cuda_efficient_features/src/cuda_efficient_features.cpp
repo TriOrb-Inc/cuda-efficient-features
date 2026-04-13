@@ -23,6 +23,7 @@ limitations under the License.
 
 #include "cuda_efficient_features.h"
 
+#include <opencv2/cudaarithm.hpp>
 #include <opencv2/cudafilters.hpp>
 #include <opencv2/cudaimgproc.hpp>
 #include <opencv2/cudawarping.hpp>
@@ -366,6 +367,41 @@ public:
 
 		if (needDescriptors && _descriptors.kind() == _InputArray::KindFlag::MAT)
 			descriptors_.download(_descriptors, stream);
+	}
+
+	void detectAndComputeAsyncPerChannel(InputArray _image, InputArray _mask,
+		std::vector<GpuMat>& keypoints, std::vector<GpuMat>& descriptors,
+		bool useProvidedKeypoints, Stream& stream) override
+	{
+		CV_Assert(_image.depth() == CV_8U);
+		CV_Assert(!useProvidedKeypoints);
+
+		if (!_mask.empty())
+		{
+			CV_Assert(_mask.type() == CV_8U);
+			CV_Assert(_mask.channels() == 1);
+		}
+
+		GpuMat image;
+		getInputMat(_image, image, stream);
+		const int channels = image.channels();
+		CV_Assert(channels >= 1);
+
+		std::vector<GpuMat> planes;
+		if (channels == 1)
+		{
+			planes.emplace_back(image);
+		}
+		else
+		{
+			planes.resize(channels);
+			cuda::split(image, planes, stream);
+		}
+
+		keypoints.resize(channels);
+		descriptors.resize(channels);
+		for (int c = 0; c < channels; ++c)
+			detectAndComputeAsync(planes[c], _mask, keypoints[c], descriptors[c], false, stream);
 	}
 
 	void convert(InputArray src, CV_OUT std::vector<KeyPoint>& dst) override

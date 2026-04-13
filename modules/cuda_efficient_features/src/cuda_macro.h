@@ -22,8 +22,14 @@ limitations under the License.
 
 #define CUDA_CHECK(err) \
 do {\
-	if (err != cudaSuccess) { \
-		printf("[CUDA Error] %s (code: %d) at %s:%d\n", cudaGetErrorString(err), err, __FILE__, __LINE__); \
+	const cudaError_t cuda_check_status__ = (err); \
+	if (cuda_check_status__ != cudaSuccess) { \
+		printf( \
+			"[CUDA Error] %s (code: %d) at %s:%d\n", \
+			cudaGetErrorString(cuda_check_status__), \
+			(int)(cuda_check_status__), \
+			__FILE__, \
+			__LINE__); \
 	} \
 } while (0)
 

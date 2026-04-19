@@ -46,8 +46,8 @@ void calcKeypoints(const GpuMat& image, const GpuMat& mask, GpuMat& keypoints, i
 	GpuMat& d_buffer, HostMem& h_buffer, cudaStream_t stream);
 int radiusSuppressionBufferSize(Size imgSize, int npoints);
 void radiusSuppression(const GpuMat& src, GpuMat& dst, Size imgSize, float radius,
-	GpuMat& d_buffer, HostMem& h_buffer, cudaStream_t stream);
-void limitPoints(GpuMat& points, int maxpoints, cudaStream_t stream);
+	GpuMat& d_buffer, HostMem& h_buffer, cudaStream_t stream, bool deterministic);
+void limitPoints(GpuMat& points, int maxpoints, cudaStream_t stream, bool deterministic);
 void calcResponses(const GpuMat& image, GpuMat& points, cudaStream_t stream);
 void calcAngles(const GpuMat& image, GpuMat& points, cudaStream_t stream);
 void scalePoints(GpuMat& points, float scale, int octave, cudaStream_t stream);
@@ -312,9 +312,9 @@ public:
 			calcResponses(image, tmppoints, cuStream);
 
 			radiusSuppression(tmppoints, keypoints, image.size(), nonmaxRadius_,
-				d_buffer, h_buffer_, cuStream);
+				d_buffer, h_buffer_, cuStream, deterministic_);
 
-			limitPoints(keypoints, nfeaturesPerLevel_[s], cuStream);
+			limitPoints(keypoints, nfeaturesPerLevel_[s], cuStream, deterministic_);
 
 			calcAngles(image, keypoints, cuStream);
 
@@ -464,6 +464,9 @@ public:
 	SphericalLensParams getSphericalLensParams() const { return lensParams_; }
 	DescriptorType getDescriptorType() const { return descriptorType_; }
 
+	void setDeterministic(bool deterministic) override { deterministic_ = deterministic; }
+	bool isDeterministic() const override { return deterministic_; }
+
 private:
 
 	int nfeatures_;
@@ -474,6 +477,7 @@ private:
 	int nonmaxRadius_;
         DescriptorType descriptorType_;
         SphericalLensParams lensParams_{};
+	bool deterministic_ = false;
 
     GpuMat image_, mask_, keypoints_, descriptors_;
     std::vector<GpuMat> imagePyr_, maskPyr_, kptsPyr_, blurPyr_, descPyr_;

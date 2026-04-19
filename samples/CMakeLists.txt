@@ -30,3 +30,8 @@ target_link_libraries(sample_benchmark ${OpenCV_LIBS} efficient_features cuda_ef
 
 add_executable(hpatches_description hpatches_description.cpp ${SRCS_COMMON})
 target_link_libraries(hpatches_description ${OpenCV_LIBS} efficient_features cuda_efficient_features OpenMP::OpenMP_CXX)
+
+# Intentionally does not depend on sample_common.{cpp,h}; the shared helpers
+# pull in opencv2/highgui which is not available in the deployment container.
+add_executable(sample_determinism_check sample_determinism_check.cpp)
+target_link_libraries(sample_determinism_check ${OpenCV_LIBS} cuda_efficient_features)

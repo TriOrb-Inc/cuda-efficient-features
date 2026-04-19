@@ -115,6 +115,22 @@ public:
 	virtual void setDescriptorType(DescriptorType descriptorType, const SphericalLensParams& params = SphericalLensParams()) = 0;
 	virtual DescriptorType getDescriptorType() const = 0;
 	virtual SphericalLensParams getSphericalLensParams() const = 0;
+
+	/**
+	 * @brief Enable deterministic keypoint ordering across runs.
+	 *
+	 * When enabled, the extractor canonicalizes keypoint array ordering after
+	 * radius-based non-maximum suppression (which otherwise uses atomicAdd-based
+	 * output packing and scrambles order) and uses a stable sort inside
+	 * `limitPoints`, so that tied Harris responses are broken by a canonical
+	 * (y, x) ordering. This removes the cross-run non-determinism in which
+	 * subset of keypoints survive truncation to `nfeatures`.
+	 *
+	 * Default is `false` to preserve legacy behavior and avoid the small sort
+	 * overhead when determinism is not required.
+	 */
+	virtual void setDeterministic(bool /*deterministic*/) { }
+	virtual bool isDeterministic() const { return false; }
 };
 
 } // namespace cuda

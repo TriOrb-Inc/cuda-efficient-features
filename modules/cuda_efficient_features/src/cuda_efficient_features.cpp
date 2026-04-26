@@ -247,7 +247,8 @@ static void logFeatureStageFingerprint(
 }
 
 void calcKeypoints(const GpuMat& image, const GpuMat& mask, GpuMat& keypoints, int nfeatures, int threshold,
-	GpuMat& d_buffer, HostMem& h_buffer, cudaStream_t stream);
+	GpuMat& d_buffer, HostMem& h_buffer, cudaStream_t stream, const char* sensorId, std::uint64_t timestamp,
+	int slotIndex, int level);
 int radiusSuppressionBufferSize(Size imgSize, int npoints);
 void radiusSuppression(const GpuMat& src, GpuMat& dst, Size imgSize, float radius,
 	GpuMat& d_buffer, HostMem& h_buffer, cudaStream_t stream, bool deterministic);
@@ -512,7 +513,8 @@ public:
 			GpuMat d_buffer = suppBuf_.createMat(bufferSize, 1, CV_32S);
 
 			calcKeypoints(image, mask, tmppoints, maxpoints,
-				fastThreshold_, d_buffer, h_buffer_, cuStream);
+				fastThreshold_, d_buffer, h_buffer_, cuStream, diagnosticSensorId_.c_str(), diagnosticTimestamp_,
+				diagnosticSlotIndex_, s);
 			if (logStageFingerprint)
 				logFeatureStageFingerprint(
 					diagnosticSensorId_, diagnosticTimestamp_, diagnosticSlotIndex_,

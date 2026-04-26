@@ -42,6 +42,10 @@
 - stage fingerprint は stage ごとの download / stream 同期を伴うため既定無効である。
   `TRIORB_CUDA_FEATURE_STAGE_FINGERPRINT_MAX_FRAMES=N` を明示した診断 run だけで有効化し、
   process-wide に `sensor_id` ごとの先頭 N timestamp に制限する。
+- Cycle 28 の `[cuda_feature_calc_keypoints_fingerprint]` は `calcKeypoints` 内部に限定した read-only 診断である。
+  `TRIORB_CUDA_FEATURE_KEYPOINT_FINGERPRINT_MAX_FRAMES=N` を明示した場合だけ有効化し、
+  pyramid level の入力画像 hash、mask hash、candidate count、候補座標 hash、block count 分布を記録する。
+  通常 run では無効のままにし、feature 抽出のしきい値、候補 cap、並び順は変更しない。
 
 ## 目標
 
@@ -49,11 +53,15 @@
 - project 側の差分が必要になった場合でも、変更理由を wrapper 側文書と合わせて追えるようにする。
 - x86 / DGX で feature set が分岐する stage を、`calcKeypoints`、`calcResponses`、
   `radiusSuppression`、`limitPoints` の順に特定できるようにする。
+- `calcKeypoints` 直後に分岐が見えた場合、入力画像 / mask / FAST candidate emission のどこで分岐が始まるかを
+  `[cuda_feature_calc_keypoints_fingerprint]` で切り分けられる状態にする。
 
 ## 関連
 
 - `slam-core/3rd/cuda-efficient-features/modules/cuda_efficient_features/src/cuda_efficient_features.cpp`
 - `slam-core/3rd/cuda-efficient-features/modules/cuda_efficient_features/src/cuda_efficient_features.md`
+- `slam-core/3rd/cuda-efficient-features/modules/cuda_efficient_features/src/cuda_fast.cu`
+- `slam-core/3rd/cuda-efficient-features/modules/cuda_efficient_features/src/cuda_fast.md`
 - `slam-core/3rd/cuda-efficient-features/modules/cuda_efficient_features/src/bad.p512.md`
 - `slam-core/3rd/cuda-efficient-features/modules/cuda_efficient_features/src/cuda_akaze.md`
 - `slam-core/3rd/cuda-efficient-features/modules/cuda_efficient_features/src/cuda_hash_sift.md`

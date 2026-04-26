@@ -36,11 +36,19 @@
 - project 固有の判断は wrapper や利用側へ寄せ、この file 自体の変更理由を追いやすくする。
 - 長大 file でも source 本体は read-only 前提で扱い、補足説明は sidecar 文書へ追加する。
 - OpenCV 4.10 系では multi-channel 分解に使う `cv::cuda::split()` が `cudaarithm` component へ属するため、この module も `cudaarithm` を build 依存へ含める。
+- Cycle 27 の `[cuda_feature_stage_fingerprint]` は read-only 診断であり、各 stage 直後の `GpuMat` を
+  CPU へ download して count / 座標 fingerprint / response 分布を記録する。同期と download は診断 run の
+  観測コストとして許容し、抽出結果の並び替え、しきい値、feature cap は変更しない。
+- stage fingerprint は stage ごとの download / stream 同期を伴うため既定無効である。
+  `TRIORB_CUDA_FEATURE_STAGE_FINGERPRINT_MAX_FRAMES=N` を明示した診断 run だけで有効化し、
+  process-wide に `sensor_id` ごとの先頭 N timestamp に制限する。
 
 ## 目標
 
 - upstream 更新や参照比較時に、この file を導入している理由と利用位置を短時間で確認できる状態を保つ。
 - project 側の差分が必要になった場合でも、変更理由を wrapper 側文書と合わせて追えるようにする。
+- x86 / DGX で feature set が分岐する stage を、`calcKeypoints`、`calcResponses`、
+  `radiusSuppression`、`limitPoints` の順に特定できるようにする。
 
 ## 関連
 

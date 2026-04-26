@@ -17,6 +17,8 @@ limitations under the License.
 #ifndef __CUDA_EFFICIENT_FEATURES_H__
 #define __CUDA_EFFICIENT_FEATURES_H__
 
+#include <cstdint>
+
 #include <opencv2/core/cuda.hpp>
 #include <opencv2/features2d.hpp>
 
@@ -131,6 +133,15 @@ public:
 	 */
 	virtual void setDeterministic(bool /*deterministic*/) { }
 	virtual bool isDeterministic() const { return false; }
+
+	/**
+	 * @brief Set optional read-only trace context for the next extraction call.
+	 *
+	 * The default implementation is a no-op so existing callers are unaffected.
+	 * Downstream wrappers use this to attach sensor / timestamp labels to
+	 * diagnostic-only stage fingerprints without changing extraction results.
+	 */
+	virtual void setDiagnosticContext(const char* /*sensorId*/, std::uint64_t /*timestamp*/, int /*slotIndex*/) { }
 };
 
 } // namespace cuda

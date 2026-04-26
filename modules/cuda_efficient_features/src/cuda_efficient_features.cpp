@@ -23,6 +23,19 @@ limitations under the License.
 
 #include "cuda_efficient_features.h"
 
+#include <algorithm>
+#include <cmath>
+#include <cstdint>
+#include <cstdlib>
+#include <iomanip>
+#include <limits>
+#include <mutex>
+#include <set>
+#include <sstream>
+#include <string>
+#include <unordered_map>
+#include <vector>
+
 #include <opencv2/cudaarithm.hpp>
 #include <opencv2/cudafilters.hpp>
 #include <opencv2/cudaimgproc.hpp>
@@ -41,6 +54,197 @@ namespace cuda
 static constexpr int PATCH_SIZE = 31;
 static constexpr int HALF_PATCH_SIZE = 15;
 static constexpr double CORNER_DENSITY = 0.1;
+
+static std::uint64_t mixU64Fingerprint(std::uint64_t hash, const std::uint64_t value)
+{
+        for (std::size_t shift = 0; shift < 64; shift += 8)
+        {
+                const auto byte = static_cast<std::uint8_t>((value >> shift) & 0xffU);
+                hash ^= static_cast<std::uint64_t>(byte);
+                hash *= 0x00000100000001b3ULL;
+        }
+        return hash;
+}
+
+static std::uint64_t coordinateFingerprint(const Vec2s& point)
+{
+        std::uint64_t hash = 0xcbf29ce484222325ULL;
+        hash = mixU64Fingerprint(hash, static_cast<std::uint64_t>(point[0]));
+        hash = mixU64Fingerprint(hash, static_cast<std::uint64_t>(point[1]));
+        return hash;
+}
+
+static std::uint64_t orderedCoordinateFingerprint(const std::vector<Vec2s>& points)
+{
+        std::uint64_t hash = 0xcbf29ce484222325ULL;
+        for (const auto& point : points)
+        {
+                hash = mixU64Fingerprint(hash, coordinateFingerprint(point));
+        }
+        return hash;
+}
+
+static std::uint64_t unorderedCoordinateSetFingerprint(std::vector<Vec2s> points)
+{
+        std::sort(points.begin(), points.end(), [](const Vec2s& lhs, const Vec2s& rhs) {
+                if (lhs[1] != rhs[1])
+                        return lhs[1] < rhs[1];
+                return lhs[0] < rhs[0];
+        });
+
+        std::uint64_t hash = 0xcbf29ce484222325ULL;
+        for (const auto& point : points)
+        {
+                hash = mixU64Fingerprint(hash, coordinateFingerprint(point));
+        }
+        return hash;
+}
+
+struct FeatureResponseStats
+{
+        float minValue = 0.0f;
+        float p50Value = 0.0f;
+        float p90Value = 0.0f;
+        float maxValue = 0.0f;
+        float meanValue = 0.0f;
+};
+
+static FeatureResponseStats computeResponseStats(std::vector<float> responses)
+{
+        FeatureResponseStats stats;
+        if (responses.empty())
+                return stats;
+
+        double sum = 0.0;
+        for (const auto response : responses)
+                sum += static_cast<double>(response);
+
+        std::sort(responses.begin(), responses.end());
+        const auto percentileAt = [&responses](const double percentile) {
+                const auto lastIndex = static_cast<double>(responses.size() - 1U);
+                const auto rawIndex = static_cast<std::size_t>(std::llround(lastIndex * percentile));
+                return responses[std::min(rawIndex, responses.size() - 1U)];
+        };
+
+        stats.minValue = responses.front();
+        stats.p50Value = percentileAt(0.50);
+        stats.p90Value = percentileAt(0.90);
+        stats.maxValue = responses.back();
+        stats.meanValue = static_cast<float>(sum / static_cast<double>(responses.size()));
+        return stats;
+}
+
+static int featureStageFingerprintFrameLimit()
+{
+        const char* value = std::getenv("TRIORB_CUDA_FEATURE_STAGE_FINGERPRINT_MAX_FRAMES");
+        if (value == nullptr || value[0] == '\0')
+                return 0;
+
+        char* end = nullptr;
+        const auto parsed = std::strtol(value, &end, 10);
+        if (end == value)
+                return 0;
+        if (parsed < 0)
+                return 0;
+        if (parsed > 1000)
+                return 1000;
+        return static_cast<int>(parsed);
+}
+
+static bool shouldLogFeatureStageFingerprint(const std::string& sensorId, const std::uint64_t timestamp)
+{
+        if (sensorId.empty())
+                return false;
+
+        const auto frameLimit = featureStageFingerprintFrameLimit();
+        if (frameLimit <= 0)
+                return false;
+
+        static std::mutex mutex;
+        static std::unordered_map<std::string, std::set<std::uint64_t>> loggedTimestampsBySensor;
+
+        std::lock_guard<std::mutex> lock(mutex);
+        auto& loggedTimestamps = loggedTimestampsBySensor[sensorId];
+        if (loggedTimestamps.find(timestamp) != loggedTimestamps.end())
+                return true;
+        if (static_cast<int>(loggedTimestamps.size()) >= frameLimit)
+                return false;
+        loggedTimestamps.insert(timestamp);
+        return true;
+}
+
+static void logFeatureStageFingerprint(
+        const std::string& sensorId,
+		const std::uint64_t timestamp,
+        const int slotIndex,
+        const int level,
+        const char* stage,
+        const GpuMat& points,
+        const bool hasResponse,
+        Stream& stream)
+{
+        if (!shouldLogFeatureStageFingerprint(sensorId, timestamp) || points.empty())
+                return;
+
+        Mat downloaded;
+        points.download(downloaded, stream);
+        stream.waitForCompletion();
+        if (downloaded.empty() || downloaded.cols <= 0)
+                return;
+
+        const int npoints = downloaded.cols;
+        const Vec2s* pointRows = downloaded.ptr<Vec2s>(EfficientFeatures::LOCATION_ROW);
+
+        std::vector<Vec2s> coordinates;
+        coordinates.reserve(static_cast<std::size_t>(npoints));
+        for (int i = 0; i < npoints; ++i)
+                coordinates.push_back(pointRows[i]);
+
+        std::vector<float> responses;
+        if (hasResponse && downloaded.rows > EfficientFeatures::RESPONSE_ROW)
+        {
+                const float* responseRows = downloaded.ptr<float>(EfficientFeatures::RESPONSE_ROW);
+                responses.reserve(static_cast<std::size_t>(npoints));
+                for (int i = 0; i < npoints; ++i)
+                        responses.push_back(responseRows[i]);
+        }
+        const auto responseStats = computeResponseStats(responses);
+
+        std::ostringstream streamLine;
+        streamLine << std::setprecision(6)
+                << "[cuda_feature_stage_fingerprint]"
+                << " sensor_id=" << sensorId
+                << " timestamp=" << timestamp
+                << " slot_index=" << slotIndex
+                << " level=" << level
+                << " stage=" << stage
+                << " feature_count=" << npoints
+                << " xy_order_hash=" << std::hex << std::setw(16) << std::setfill('0')
+                << orderedCoordinateFingerprint(coordinates)
+                << " xy_set_hash=" << std::setw(16)
+                << unorderedCoordinateSetFingerprint(coordinates)
+                << std::dec << std::setfill(' ')
+                << " has_response=" << (hasResponse ? 1 : 0)
+                << std::scientific
+                << " response_min=" << responseStats.minValue
+                << " response_p50=" << responseStats.p50Value
+                << " response_p90=" << responseStats.p90Value
+                << " response_max=" << responseStats.maxValue
+                << " response_mean=" << responseStats.meanValue;
+        const int sampleCount = std::min(npoints, 3);
+        for (int i = 0; i < sampleCount; ++i)
+        {
+                streamLine << std::defaultfloat
+                        << " sample" << i << "_x=" << coordinates[static_cast<std::size_t>(i)][0]
+                        << " sample" << i << "_y=" << coordinates[static_cast<std::size_t>(i)][1];
+                if (hasResponse && static_cast<std::size_t>(i) < responses.size())
+                {
+                        streamLine << std::scientific
+                                << " sample" << i << "_response=" << responses[static_cast<std::size_t>(i)];
+                }
+        }
+        std::cout << streamLine.str() << std::endl;
+}
 
 void calcKeypoints(const GpuMat& image, const GpuMat& mask, GpuMat& keypoints, int nfeatures, int threshold,
 	GpuMat& d_buffer, HostMem& h_buffer, cudaStream_t stream);
@@ -291,6 +495,7 @@ public:
         maskPyr_.resize(nlevels_);
         kptsPyr_.resize(nlevels_);
         kptsBuf_.resize(nlevels_);
+		const bool logStageFingerprint = shouldLogStageFingerprint();
         for (int s = firstLevel_; s < nlevels_; s++)
 		{
 			const GpuMat& image = imagePyr_[s];
@@ -308,13 +513,29 @@ public:
 
 			calcKeypoints(image, mask, tmppoints, maxpoints,
 				fastThreshold_, d_buffer, h_buffer_, cuStream);
+			if (logStageFingerprint)
+				logFeatureStageFingerprint(
+					diagnosticSensorId_, diagnosticTimestamp_, diagnosticSlotIndex_,
+					s, "calcKeypoints", tmppoints, false, stream);
 
 			calcResponses(image, tmppoints, cuStream);
+			if (logStageFingerprint)
+				logFeatureStageFingerprint(
+					diagnosticSensorId_, diagnosticTimestamp_, diagnosticSlotIndex_,
+					s, "calcResponses", tmppoints, true, stream);
 
 			radiusSuppression(tmppoints, keypoints, image.size(), nonmaxRadius_,
 				d_buffer, h_buffer_, cuStream, deterministic_);
+			if (logStageFingerprint)
+				logFeatureStageFingerprint(
+					diagnosticSensorId_, diagnosticTimestamp_, diagnosticSlotIndex_,
+					s, "radiusSuppression", keypoints, true, stream);
 
 			limitPoints(keypoints, nfeaturesPerLevel_[s], cuStream, deterministic_);
+			if (logStageFingerprint)
+				logFeatureStageFingerprint(
+					diagnosticSensorId_, diagnosticTimestamp_, diagnosticSlotIndex_,
+					s, "limitPoints", keypoints, true, stream);
 
 			calcAngles(image, keypoints, cuStream);
 
@@ -467,7 +688,28 @@ public:
 	void setDeterministic(bool deterministic) override { deterministic_ = deterministic; }
 	bool isDeterministic() const override { return deterministic_; }
 
+	void setDiagnosticContext(const char* sensorId, std::uint64_t timestamp, int slotIndex) override
+	{
+		diagnosticSensorId_ = sensorId != nullptr ? sensorId : "";
+		diagnosticTimestamp_ = timestamp;
+		diagnosticSlotIndex_ = slotIndex;
+	}
+
 private:
+	bool shouldLogStageFingerprint()
+	{
+		if (diagnosticSensorId_.empty())
+			return false;
+
+		if (diagnosticTimestamp_ != diagnosticLastTimestamp_)
+		{
+			diagnosticLastTimestamp_ = diagnosticTimestamp_;
+			if (diagnosticLoggedFrameCount_ >= featureStageFingerprintFrameLimit())
+				return false;
+			diagnosticLoggedFrameCount_ += 1;
+		}
+		return true;
+	}
 
 	int nfeatures_;
 	float scaleFactor_;
@@ -478,6 +720,11 @@ private:
         DescriptorType descriptorType_;
         SphericalLensParams lensParams_{};
 	bool deterministic_ = false;
+	std::string diagnosticSensorId_;
+	std::uint64_t diagnosticTimestamp_ = 0;
+	std::uint64_t diagnosticLastTimestamp_ = 0;
+	int diagnosticSlotIndex_ = -1;
+	int diagnosticLoggedFrameCount_ = 0;
 
     GpuMat image_, mask_, keypoints_, descriptors_;
     std::vector<GpuMat> imagePyr_, maskPyr_, kptsPyr_, blurPyr_, descPyr_;

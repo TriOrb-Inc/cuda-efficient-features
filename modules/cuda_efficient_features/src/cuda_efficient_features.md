@@ -46,6 +46,15 @@
   `TRIORB_CUDA_FEATURE_KEYPOINT_FINGERPRINT_MAX_FRAMES=N` を明示した場合だけ有効化し、
   pyramid level の入力画像 hash、mask hash、candidate count、候補座標 hash、block count 分布を記録する。
   通常 run では無効のままにし、feature 抽出のしきい値、候補 cap、並び順は変更しない。
+- Loop1 deterministic では `calcImagePyramid()` の level 0 copy を `image.copyTo(images[0], stream)` に変更し、
+  caller が指定した CUDA stream 上で pyramid 入力の copy と後続 kernel の順序を固定する。従来の stream なし
+  copy は default stream と per-camera stream の依存が曖昧になり、同一 HDF5 の 2 run で descriptor payload が
+  まれに分岐する起点になっていた。
+- `radiusSuppression` の同一 response tie-break は候補座標 `(y, x)` の辞書順に固定する。低 texture 領域では
+  response 同値が多く、block-local emission 順に任せると survivor が run ごとに変わるためである。
+- `TRIORB_CUDA_FEATURE_ANGLE_QUANTIZATION_DEG` は angle payload を指定 degree 単位へ丸める診断 knob である。
+  BISON-01 では差分縮小に寄与したが、最終的な bit-exact trajectory には stream copy 修正で到達したため、
+  既定は `0` のままにする。
 
 ## 目標
 

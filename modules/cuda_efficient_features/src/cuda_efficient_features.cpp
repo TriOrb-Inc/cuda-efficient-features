@@ -254,9 +254,22 @@ void radiusSuppression(const GpuMat& src, GpuMat& dst, Size imgSize, float radiu
 	GpuMat& d_buffer, HostMem& h_buffer, cudaStream_t stream, bool deterministic);
 void limitPoints(GpuMat& points, int maxpoints, cudaStream_t stream, bool deterministic);
 void calcResponses(const GpuMat& image, GpuMat& points, cudaStream_t stream);
-void calcAngles(const GpuMat& image, GpuMat& points, cudaStream_t stream);
+void calcAngles(const GpuMat& image, GpuMat& points, cudaStream_t stream, float quantizationDeg);
 void scalePoints(GpuMat& points, float scale, int octave, cudaStream_t stream);
 void convertKeypoints(const GpuMat& src, GpuMat& dst, cudaStream_t stream);
+
+float deterministicAngleQuantizationDeg()
+{
+	const char* value = std::getenv("TRIORB_CUDA_FEATURE_ANGLE_QUANTIZATION_DEG");
+	if (value == nullptr || value[0] == '\0')
+		return 0.0f;
+
+	char* end = nullptr;
+	const float parsed = std::strtof(value, &end);
+	if (end == value || parsed < 0.f)
+		return 0.0f;
+	return parsed;
+}
 
 static Ptr<EfficientDescriptorsAsync> createDescriber(
         EfficientFeatures::DescriptorType descriptorType, const SphericalLensParams& lensParams)
@@ -392,7 +405,7 @@ static void calcImagePyramid(const GpuMat& image, std::vector<GpuMat>& images, s
 	scales.resize(nlevels);
 
 	float scale = 1.f;
-	image.copyTo(images[0]);
+	image.copyTo(images[0], stream);
 	scales[0] = scale;
 
 	for (int s = 1; s < nlevels; s++)
@@ -539,7 +552,8 @@ public:
 					diagnosticSensorId_, diagnosticTimestamp_, diagnosticSlotIndex_,
 					s, "limitPoints", keypoints, true, stream);
 
-			calcAngles(image, keypoints, cuStream);
+			calcAngles(image, keypoints, cuStream,
+				deterministic_ ? deterministicAngleQuantizationDeg() : 0.f);
 
 			kptsPyr_[s] = keypoints;
 			nkeypoints += keypoints.cols;

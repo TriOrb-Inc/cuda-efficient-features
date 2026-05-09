@@ -21,6 +21,8 @@ limitations under the License.
 
 #include "cuda_hash_sift_internal.h"
 
+#include <cstdlib>
+
 #include <cuda_runtime.h>
 #include <device_launch_parameters.h>
 
@@ -369,6 +371,69 @@ static __device__ void createHistogram(const uchar patch[PATCH_H][PATCH_W], Hist
 	}
 }
 
+static __device__ void createHistogramSerial(const uchar patch[PATCH_H][PATCH_W], Histogram& hist, float kpScale)
+{
+	const int h = PATCH_H;
+	const int w = PATCH_W;
+
+	const float kpRadius = kpScale * h * 0.5f;
+	const float kernelSigma = 0.5f * C_BINS * SIFT_DESCR_SCL_FCTR * kpRadius;
+	const float distScale = -1.f / (2 * kernelSigma * kernelSigma);
+	const float cx = 0.5f * w;
+	const float cy = 0.5f * h;
+
+	for (int y = 1; y < h - 1; ++y)
+	{
+		for (int x = 1; x < w - 1; ++x)
+		{
+			const float magScale = expf(distScale * normsq(x - cx, y - cy));
+			const float dx = patch[y + 0][x + 1] - patch[y + 0][x - 1];
+			const float dy = patch[y - 1][x + 0] - patch[y + 1][x + 0];
+			const float mag = magScale * sqrtf(normsq(dx, dy));
+			const float ori = atan2f(dy, dx);
+
+			int ri;
+			float rf;
+			separateIF(hist.bin.getRBin(y), &ri, &rf);
+
+			int ci;
+			float cf;
+			separateIF(hist.bin.getCBin(x), &ci, &cf);
+
+			int oi;
+			float of;
+			separateIF(hist.bin.scaleO * ori, &oi, &of);
+
+			if (oi < 0)
+				oi += ORI_BINS;
+			if (oi >= ORI_BINS)
+				oi -= ORI_BINS;
+
+			float v0, v1;
+			distribute(mag, rf, &v0, &v1);
+
+			float v00, v01, v10, v11;
+			distribute(v0, cf, &v00, &v01);
+			distribute(v1, cf, &v10, &v11);
+
+			float v000, v001, v010, v011, v100, v101, v110, v111;
+			distribute(v00, of, &v000, &v001);
+			distribute(v01, of, &v010, &v011);
+			distribute(v10, of, &v100, &v101);
+			distribute(v11, of, &v110, &v111);
+
+			hist.hist[ri + 1][ci + 1][oi + 0] += v000;
+			hist.hist[ri + 1][ci + 1][oi + 1] += v001;
+			hist.hist[ri + 1][ci + 2][oi + 0] += v010;
+			hist.hist[ri + 1][ci + 2][oi + 1] += v011;
+			hist.hist[ri + 2][ci + 1][oi + 0] += v100;
+			hist.hist[ri + 2][ci + 1][oi + 1] += v101;
+			hist.hist[ri + 2][ci + 2][oi + 0] += v110;
+			hist.hist[ri + 2][ci + 2][oi + 1] += v111;
+		}
+	}
+}
+
 static __device__ void describeFeatureVector(Histogram& hist, float* descriptors)
 {
 	hist.finalize(descriptors);
@@ -390,6 +455,55 @@ static __device__ void describeFeatureVector(Histogram& hist, float* descriptors
 
 	// Optional Step 9: Scale the result, so that it can be easily converted to byte array
 	for (int k = tid; k < DESCRIPTOR_SIZE; k += blockSize)
+		descriptors[k] = clip(INT_DESCR_FACTOR * descriptors[k]);
+}
+
+static __device__ void clearHistogramSerial(Histogram& hist)
+{
+	for (int r = 0; r < R_BINS + 2; ++r)
+		for (int c = 0; c < C_BINS + 2; ++c)
+			for (int o = 0; o < ORI_BINS + 2; ++o)
+				hist.hist[r][c][o] = 0.f;
+}
+
+static __device__ void finalizeHistogramSerial(Histogram& hist, float* descriptors)
+{
+	for (int r = 0; r < R_BINS; ++r)
+	{
+		for (int c = 0; c < C_BINS; ++c)
+		{
+			hist.hist[r + 1][c + 1][0] += hist.hist[r + 1][c + 1][ORI_BINS + 0];
+			hist.hist[r + 1][c + 1][1] += hist.hist[r + 1][c + 1][ORI_BINS + 1];
+			for (int k = 0; k < ORI_BINS; ++k)
+				descriptors[(r * R_BINS + c) * ORI_BINS + k] = hist.hist[r + 1][c + 1][k];
+		}
+	}
+}
+
+static __device__ void normalizeDescriptorsSerial(float* descriptors)
+{
+	float sum = 0.f;
+	for (int i = 0; i < DESCRIPTOR_SIZE; ++i)
+		sum += squared(descriptors[i]);
+
+	const float norm = ::max(sqrtf(sum), FLT_EPSILON);
+	const float scale = 1.f / norm;
+	for (int i = 0; i < DESCRIPTOR_SIZE; ++i)
+		descriptors[i] = scale * descriptors[i];
+}
+
+static __device__ void describeFeatureVectorSerial(Histogram& hist, float* descriptors)
+{
+	finalizeHistogramSerial(hist, descriptors);
+
+	normalizeDescriptorsSerial(descriptors);
+
+	for (int i = 0; i < DESCRIPTOR_SIZE; ++i)
+		descriptors[i] = (descriptors[i] < MAGNITUDE_TH) ? descriptors[i] : MAGNITUDE_TH;
+
+	normalizeDescriptorsSerial(descriptors);
+
+	for (int k = 0; k < DESCRIPTOR_SIZE; ++k)
 		descriptors[k] = clip(INT_DESCR_FACTOR * descriptors[k]);
 }
 
@@ -430,6 +544,34 @@ __global__ void computePatchSIFTKernel(const PtrStepSzb image,
 		responses(ix, k) = descriptors[k];
 }
 
+__global__ void computePatchSIFTDeterministicKernel(const PtrStepSzb image,
+	const PtrStepSz<KeyPoint> keypoints, PtrStepf responses,
+	float croppingScale, float keypointScale, double sigma, SphericalSamplingParams params)
+{
+	__shared__ uchar patch[PATCH_H][PATCH_W];
+	__shared__ float histbuf[R_BINS + 2][C_BINS + 2][ORI_BINS + 2];
+	__shared__ float descriptors[DESCRIPTOR_SIZE + 1];
+
+	const int ix = blockIdx.x;
+	if (ix >= keypoints.rows)
+		return;
+
+	rectifyPatch(image, keypoints[ix], patch, croppingScale, params);
+	__syncthreads();
+
+	if (threadIdx1D() != 0)
+		return;
+
+	descriptors[0] = 1.f;
+	Histogram hist(histbuf, HistBin(PATCH_H, PATCH_W, keypointScale));
+	clearHistogramSerial(hist);
+	createHistogramSerial(patch, hist, keypointScale);
+	describeFeatureVectorSerial(hist, &descriptors[1]);
+
+	for (int k = 0; k < DESCRIPTOR_SIZE + 1; ++k)
+		responses(ix, k) = descriptors[k];
+}
+
 __global__ void binarizeDescriptorsKernel(const PtrStepf src, PtrStepSzb dst)
 {
 	const int ix = blockDim.x * blockIdx.x + threadIdx.x;
@@ -453,9 +595,49 @@ __global__ void binarizeDescriptorsKernel(const PtrStepf src, PtrStepSzb dst)
 	dst(iy, ix) = byte;
 }
 
+__global__ void projectAndBinarizeHashSIFTDeterministicKernel(
+	const PtrStepf responses, const PtrStepf bMatrix, PtrStepSzb dst, const int responseCols)
+{
+	const int featureIndex = blockIdx.x;
+	const int byteIndex = blockDim.x * blockIdx.y + threadIdx.x;
+
+	if (featureIndex >= dst.rows || byteIndex >= dst.cols)
+		return;
+
+	uchar byte = 0;
+	for (int bitInByte = 0; bitInByte < 8; ++bitInByte)
+	{
+		const int bitIndex = byteIndex * 8 + bitInByte;
+		float sum = 0.f;
+		for (int k = 0; k < responseCols; ++k)
+			sum = fmaf(responses(featureIndex, k), bMatrix(bitIndex, k), sum);
+		byte |= static_cast<uchar>((sum > 0.f) << (7 - bitInByte));
+	}
+
+	dst(featureIndex, byteIndex) = byte;
+}
+
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // Public functions
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+static bool isDeterministicPatchSIFTEnabled()
+{
+	const char* value = std::getenv("TRIORB_CUDA_HASH_SIFT_DETERMINISTIC");
+	if (value == nullptr || value[0] == '\0')
+		value = std::getenv("TRIORB_CUDA_FEATURES_DETERMINISTIC");
+	if (value == nullptr || value[0] == '\0')
+		return true;
+	if (value[0] == '0')
+		return false;
+	if ((value[0] == 'f' || value[0] == 'F') && (value[1] == 'a' || value[1] == 'A'))
+		return false;
+	if ((value[0] == 'n' || value[0] == 'N') && (value[1] == 'o' || value[1] == 'O'))
+		return false;
+	if ((value[0] == 'o' || value[0] == 'O') && (value[1] == 'f' || value[1] == 'F'))
+		return false;
+	return true;
+}
+
 void computePatchSIFTs(const GpuMat& image, const GpuMat& keypoints, GpuMat& responses,
 	float croppingScale, float keypointScale, double sigma, SphericalSamplingParams sphericalParams, cudaStream_t stream)
 {
@@ -464,8 +646,16 @@ void computePatchSIFTs(const GpuMat& image, const GpuMat& keypoints, GpuMat& res
 
 	sigma = sqrt(max(sigma * sigma - SIFT_INIT_SIGMA * SIFT_INIT_SIGMA, 0.01));
 
-	computePatchSIFTKernel<<<dimGrid, dimBlock, 0, stream>>>(image, keypoints, responses, croppingScale, keypointScale, sigma,
-                sphericalParams);
+	if (isDeterministicPatchSIFTEnabled())
+	{
+		computePatchSIFTDeterministicKernel<<<dimGrid, dimBlock, 0, stream>>>(
+			image, keypoints, responses, croppingScale, keypointScale, sigma, sphericalParams);
+	}
+	else
+	{
+		computePatchSIFTKernel<<<dimGrid, dimBlock, 0, stream>>>(
+			image, keypoints, responses, croppingScale, keypointScale, sigma, sphericalParams);
+	}
 
 	CUDA_CHECK(cudaGetLastError());
 }
@@ -477,6 +667,19 @@ void binarizeDescriptors(const GpuMat& src, GpuMat& dst, cudaStream_t stream)
 	const dim3 dimGrid(divUp(dst.cols, BLOCK_SIZE), divUp(dst.rows, BLOCK_SIZE));
 
 	binarizeDescriptorsKernel<<<dimGrid, dimBlock, 0, stream>>>(src, dst);
+
+	CUDA_CHECK(cudaGetLastError());
+}
+
+void projectAndBinarizeHashSIFTDeterministic(
+	const GpuMat& responses, const GpuMat& bMatrix, GpuMat& descriptors, cudaStream_t stream)
+{
+	constexpr int BLOCK_SIZE = 32;
+	const dim3 dimBlock(BLOCK_SIZE, 1);
+	const dim3 dimGrid(responses.rows, divUp(descriptors.cols, BLOCK_SIZE));
+
+	projectAndBinarizeHashSIFTDeterministicKernel<<<dimGrid, dimBlock, 0, stream>>>(
+		responses, bMatrix, descriptors, responses.cols);
 
 	CUDA_CHECK(cudaGetLastError());
 }

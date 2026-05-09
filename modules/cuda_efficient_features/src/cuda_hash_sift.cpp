@@ -22,6 +22,7 @@ limitations under the License.
 #include "cuda_efficient_descriptors.h"
 
 #include <algorithm>
+#include <cstdlib>
 
 #include <opencv2/cudaarithm.hpp>
 #include <opencv2/core/cuda_stream_accessor.hpp>
@@ -71,6 +72,8 @@ public:
 	{
 		CUBLAS_CHECK( cublasCreate_v2(&handle_) );
 		CUBLAS_CHECK( cublasSetPointerMode_v2(handle_, CUBLAS_POINTER_MODE_HOST) );
+		CUBLAS_CHECK( cublasSetAtomicsMode(handle_, CUBLAS_ATOMICS_NOT_ALLOWED) );
+		CUBLAS_CHECK( cublasSetMathMode(handle_, CUBLAS_DEFAULT_MATH) );
 	}
 
 	~MatmulAndSign()
@@ -81,6 +84,13 @@ public:
 	void operator()(const GpuMat& responses, const GpuMat& bMatrix, GpuMat& descriptors, Stream& stream)
 	{
 		CV_Assert(responses.rows == descriptors.rows);
+		if (isDeterministicProjectionEnabled())
+		{
+			gpu::projectAndBinarizeHashSIFTDeterministic(
+				responses, bMatrix, descriptors, StreamAccessor::getStream(stream));
+			return;
+		}
+
 		CUBLAS_CHECK( cublasSetStream_v2(handle_, StreamAccessor::getStream(stream)) );
 
 		GpuMat tmp = bufTmp_.createMat(responses.rows, bMatrix.rows, responses.type());
@@ -89,6 +99,40 @@ public:
 	}
 
 private:
+
+	static bool isDeterministicHashSIFTEnabled()
+	{
+		const char* value = std::getenv("TRIORB_CUDA_HASH_SIFT_DETERMINISTIC");
+		if (value == nullptr || value[0] == '\0')
+			value = std::getenv("TRIORB_CUDA_FEATURES_DETERMINISTIC");
+		if (value == nullptr || value[0] == '\0')
+			return true;
+		if (value[0] == '0')
+			return false;
+		if ((value[0] == 'f' || value[0] == 'F') && (value[1] == 'a' || value[1] == 'A'))
+			return false;
+		if ((value[0] == 'n' || value[0] == 'N') && (value[1] == 'o' || value[1] == 'O'))
+			return false;
+		if ((value[0] == 'o' || value[0] == 'O') && (value[1] == 'f' || value[1] == 'F'))
+			return false;
+		return true;
+	}
+
+	static bool isDeterministicProjectionEnabled()
+	{
+		const char* value = std::getenv("TRIORB_CUDA_HASH_SIFT_DETERMINISTIC_PROJECT");
+		if (value == nullptr || value[0] == '\0')
+			return false;
+		if (value[0] == '0')
+			return false;
+		if ((value[0] == 'f' || value[0] == 'F') && (value[1] == 'a' || value[1] == 'A'))
+			return false;
+		if ((value[0] == 'n' || value[0] == 'N') && (value[1] == 'o' || value[1] == 'O'))
+			return false;
+		if ((value[0] == 'o' || value[0] == 'O') && (value[1] == 'f' || value[1] == 'F'))
+			return false;
+		return isDeterministicHashSIFTEnabled();
+	}
 
 	DeviceBuffer bufTmp_;
         cublasHandle_t handle_;

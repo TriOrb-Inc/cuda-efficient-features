@@ -37,6 +37,9 @@ void computePatchSIFTs(const GpuMat& image, const GpuMat& keypoints, GpuMat& res
 
 void binarizeDescriptors(const GpuMat& src, GpuMat& dst, cudaStream_t stream = 0);
 
+void projectAndBinarizeHashSIFTDeterministic(
+	const GpuMat& responses, const GpuMat& bMatrix, GpuMat& descriptors, cudaStream_t stream = 0);
+
 } // namespace gpu
 } // namespace cv
 } // namespace cv

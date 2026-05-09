@@ -52,6 +52,26 @@ static __device__ inline int distanceSq(short2 pt1, short2 pt2)
 	return dx * dx + dy * dy;
 }
 
+static __device__ inline bool isLexicographicallyEarlier(short2 lhs, short2 rhs)
+{
+	if (lhs.y != rhs.y)
+		return lhs.y < rhs.y;
+	return lhs.x < rhs.x;
+}
+
+static __device__ inline bool shouldSuppressByResponseAndLocation(
+	short2 candidatePoint, float candidateResponse, short2 neighborPoint, float neighborResponse)
+{
+	if (neighborResponse > candidateResponse)
+		return true;
+	if (neighborResponse < candidateResponse)
+		return false;
+
+	// Equal response is common on low-texture areas. Use a canonical location
+	// tie-break instead of letting block-local point order decide the survivor.
+	return isLexicographicallyEarlier(neighborPoint, candidatePoint);
+}
+
 // Deterministic tie-breaker: sort points by (y, x) ascending.
 //
 // Needed because `radiusSuppressionKernel` below uses `atomicAdd` to pack
@@ -128,7 +148,8 @@ static __device__ inline bool IsMaxPoint(int idx1, const short2* points, const f
 				const short2 pt2 = points[idx2];
 				const float response2 = responses[idx2];
 
-				if (response1 <= response2 && distanceSq(pt1, pt2) < imageRadius)
+				if (distanceSq(pt1, pt2) < imageRadius &&
+					shouldSuppressByResponseAndLocation(pt1, response1, pt2, response2))
 					return false;
 			}
 		}
@@ -272,6 +293,16 @@ __global__ void calcAnglesKernel(PtrStepb image, const short2* points, float* an
 		return;
 
 	angles[i] = IC_Angle(image, points[i]);
+}
+
+__global__ void quantizeAnglesKernel(float* angles, int npoints, float quantizationDeg)
+{
+	const int i = blockIdx.x * blockDim.x + threadIdx.x;
+	if (i >= npoints)
+		return;
+
+	if (quantizationDeg > 0.f)
+		angles[i] = nearbyintf(angles[i] / quantizationDeg) * quantizationDeg;
 }
 
 __global__ void scalePointsKernel(short2* points, int* octaves, float* sizes, int npoints, float scale, int octave)
@@ -435,7 +466,7 @@ void calcResponses(const GpuMat& image, GpuMat& points, cudaStream_t stream)
 	CUDA_CHECK(cudaGetLastError());
 }
 
-void calcAngles(const GpuMat& image, GpuMat& points, cudaStream_t stream)
+void calcAngles(const GpuMat& image, GpuMat& points, cudaStream_t stream, float quantizationDeg)
 {
 	const int npoints = points.cols;
 	if (npoints <= 0)
@@ -449,6 +480,12 @@ void calcAngles(const GpuMat& image, GpuMat& points, cudaStream_t stream)
 
 	calcAnglesKernel<<<grid, block, 0, stream>>>(image, locations, angles, npoints);
 	CUDA_CHECK(cudaGetLastError());
+
+	if (quantizationDeg > 0.f)
+	{
+		quantizeAnglesKernel<<<grid, block, 0, stream>>>(angles, npoints, quantizationDeg);
+		CUDA_CHECK(cudaGetLastError());
+	}
 }
 
 void scalePoints(GpuMat& points, float scale, int octave, cudaStream_t stream)

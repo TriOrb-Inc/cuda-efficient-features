@@ -70,28 +70,53 @@ public:
 
 	MatmulAndSign()
 	{
-		CUBLAS_CHECK( cublasCreate_v2(&handle_) );
-		CUBLAS_CHECK( cublasSetPointerMode_v2(handle_, CUBLAS_POINTER_MODE_HOST) );
-		CUBLAS_CHECK( cublasSetAtomicsMode(handle_, CUBLAS_ATOMICS_NOT_ALLOWED) );
-		CUBLAS_CHECK( cublasSetMathMode(handle_, CUBLAS_DEFAULT_MATH) );
+		if (isDeterministicProjectionEnabled())
+		{
+			useDeterministicProjection_ = true;
+			return;
+		}
+
+		cublasStatus_t status = cublasCreate_v2(&handle_);
+		if (status != CUBLAS_STATUS_SUCCESS || handle_ == nullptr)
+		{
+			printf("[CUBLAS Error] HashSIFT cuBLAS init failed (code: %d); using deterministic projection fallback\n", status);
+			handle_ = nullptr;
+			useDeterministicProjection_ = true;
+			return;
+		}
+
+		if (!configureHandle())
+		{
+			CUBLAS_CHECK( cublasDestroy_v2(handle_) );
+			handle_ = nullptr;
+			useDeterministicProjection_ = true;
+		}
 	}
 
 	~MatmulAndSign()
 	{
-		CUBLAS_CHECK( cublasDestroy_v2(handle_) );
+		if (handle_ != nullptr)
+			CUBLAS_CHECK( cublasDestroy_v2(handle_) );
 	}
 
 	void operator()(const GpuMat& responses, const GpuMat& bMatrix, GpuMat& descriptors, Stream& stream)
 	{
 		CV_Assert(responses.rows == descriptors.rows);
-		if (isDeterministicProjectionEnabled())
+		if (useDeterministicProjection_ || isDeterministicProjectionEnabled())
 		{
 			gpu::projectAndBinarizeHashSIFTDeterministic(
 				responses, bMatrix, descriptors, StreamAccessor::getStream(stream));
 			return;
 		}
 
-		CUBLAS_CHECK( cublasSetStream_v2(handle_, StreamAccessor::getStream(stream)) );
+		cublasStatus_t status = cublasSetStream_v2(handle_, StreamAccessor::getStream(stream));
+		if (status != CUBLAS_STATUS_SUCCESS)
+		{
+			printf("[CUBLAS Error] HashSIFT cuBLAS stream bind failed (code: %d); using deterministic projection fallback\n", status);
+			gpu::projectAndBinarizeHashSIFTDeterministic(
+				responses, bMatrix, descriptors, StreamAccessor::getStream(stream));
+			return;
+		}
 
 		GpuMat tmp = bufTmp_.createMat(responses.rows, bMatrix.rows, responses.type());
 		hashSIFTGemm(responses, bMatrix, tmp, handle_);
@@ -134,8 +159,32 @@ private:
 		return isDeterministicHashSIFTEnabled();
 	}
 
+	bool configureHandle()
+	{
+		cublasStatus_t status = cublasSetPointerMode_v2(handle_, CUBLAS_POINTER_MODE_HOST);
+		if (status != CUBLAS_STATUS_SUCCESS)
+		{
+			CUBLAS_CHECK(status);
+			return false;
+		}
+		status = cublasSetAtomicsMode(handle_, CUBLAS_ATOMICS_NOT_ALLOWED);
+		if (status != CUBLAS_STATUS_SUCCESS)
+		{
+			CUBLAS_CHECK(status);
+			return false;
+		}
+		status = cublasSetMathMode(handle_, CUBLAS_DEFAULT_MATH);
+		if (status != CUBLAS_STATUS_SUCCESS)
+		{
+			CUBLAS_CHECK(status);
+			return false;
+		}
+		return true;
+	}
+
 	DeviceBuffer bufTmp_;
-        cublasHandle_t handle_;
+	cublasHandle_t handle_{nullptr};
+	bool useDeterministicProjection_{false};
 };
 
 namespace

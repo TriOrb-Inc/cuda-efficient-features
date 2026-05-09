@@ -41,7 +41,14 @@
 - `MatmulAndSign` は cuBLAS handle に `CUBLAS_ATOMICS_NOT_ALLOWED` と `CUBLAS_DEFAULT_MATH` を設定する。
   HashSIFT の射影行列積でライブラリ側の atomic reduction や TF32 近似が混ざらないようにするためである。
 - `TRIORB_CUDA_HASH_SIFT_DETERMINISTIC_PROJECT=1` は cuBLAS GEMM を使わず feature ごとの固定順 dot product で
-  descriptor を二値化する診断 knob である。BISON-01 A/B では closure が悪化したため、既定は無効にする。
+  descriptor を二値化する診断 knob である。この mode では `MatmulAndSign` constructor でも cuBLAS handle を
+  作らない。Thor のように cuBLAS が対象 GPU の kernel image を持たない環境でも、deterministic projection
+  経路だけで HashSIFT を初期化できるようにするためである。BISON-01 A/B では closure が悪化したため、既定は無効にする。
+- cuBLAS handle 初期化や設定が失敗した場合は、HashSIFT extractor の構築を失敗させず deterministic projection へ
+  自動退避する。これは Thor の cross-arch verify で cuBLAS binary が device に合わない場合の互換 fallback であり、
+  cuBLAS が正常に使える x86 / DGX の既定 path は変更しない。
+- frame 処理中の cuBLAS stream binding が失敗した場合も、同じ deterministic projection fallback へ切り替える。
+  handle 作成だけでなく、実行時の stream 設定失敗でも HashSIFT が abort しないようにするためである。
 
 ## 目標
 

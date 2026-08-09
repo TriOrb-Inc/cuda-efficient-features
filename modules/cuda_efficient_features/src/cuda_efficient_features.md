@@ -55,6 +55,12 @@
 - `TRIORB_CUDA_FEATURE_ANGLE_QUANTIZATION_DEG` は angle payload を指定 degree 単位へ丸める診断 knob である。
   BISON-01 では差分縮小に寄与したが、最終的な bit-exact trajectory には stream copy 修正で到達したため、
   既定は `0` のままにする。
+- deterministic FAST の 10% area cap は既存の `cvRound(CORNER_DENSITY * image.area())` を変更しない。
+  初回 counter が cap 以下なら従来の候補 buffer をそのまま使い、overflow 時だけ instance 専用の再利用 buffer へ
+  全候補を再取得して固定 SplitMix64 座標 rank で pre-cap する。これにより current capped subset の並べ替えではなく、
+  full raw set から platform 非依存の subset を選ぶ。
+- full recapture 用 device / pinned host buffer は level 0 の最大容量を保持して縮小 level と次 frame で再利用する。
+  4 camera slot はそれぞれの `EfficientFeaturesImpl` instance に buffer を持つため、stream 間で候補列を共有しない。
 
 ## 目標
 
@@ -64,6 +70,7 @@
   `radiusSuppression`、`limitPoints` の順に特定できるようにする。
 - `calcKeypoints` 直後に分岐が見えた場合、入力画像 / mask / FAST candidate emission のどこで分岐が始まるかを
   `[cuda_feature_calc_keypoints_fingerprint]` で切り分けられる状態にする。
+- deterministic overflow で選ばれた座標、response、descriptor の対応と multi-level buffer reuse を 4 stream test で固定する。
 
 ## 関連
 
@@ -71,6 +78,8 @@
 - `slam-core/3rd/cuda-efficient-features/modules/cuda_efficient_features/src/cuda_efficient_features.md`
 - `slam-core/3rd/cuda-efficient-features/modules/cuda_efficient_features/src/cuda_fast.cu`
 - `slam-core/3rd/cuda-efficient-features/modules/cuda_efficient_features/src/cuda_fast.md`
+- `slam-core/3rd/cuda-efficient-features/modules/cuda_efficient_features/src/deterministic_fast_precap.h`
+- `slam-core/3rd/cuda-efficient-features/tests/fast_precap_test.cpp`
 - `slam-core/3rd/cuda-efficient-features/modules/cuda_efficient_features/src/bad.p512.md`
 - `slam-core/3rd/cuda-efficient-features/modules/cuda_efficient_features/src/cuda_akaze.md`
 - `slam-core/3rd/cuda-efficient-features/modules/cuda_efficient_features/src/cuda_hash_sift.md`

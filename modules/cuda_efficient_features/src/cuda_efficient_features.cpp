@@ -247,7 +247,8 @@ static void logFeatureStageFingerprint(
 }
 
 void calcKeypoints(const GpuMat& image, const GpuMat& mask, GpuMat& keypoints, int nfeatures, int threshold,
-	GpuMat& d_buffer, HostMem& h_buffer, cudaStream_t stream, const char* sensorId, std::uint64_t timestamp,
+	GpuMat& d_buffer, HostMem& h_buffer, cudaStream_t stream, bool deterministic,
+	GpuMat& fullCaptureBuffer, HostMem& fullCaptureHostBuffer, const char* sensorId, std::uint64_t timestamp,
 	int slotIndex, int level);
 int radiusSuppressionBufferSize(Size imgSize, int npoints);
 void radiusSuppression(const GpuMat& src, GpuMat& dst, Size imgSize, float radius,
@@ -521,13 +522,24 @@ public:
 			const int maxpoints = cvRound(CORNER_DENSITY * image.size().area());
 			GpuMat tmppoints = fastBuf_.createMat(4, maxpoints, CV_32F);
 			GpuMat keypoints = kptsBuf_[s].createMat(ROWS_COUNT, maxpoints, CV_32F);
+			GpuMat fullCaptureBuffer;
+			if (deterministic_)
+			{
+				const auto imageArea = image.size().area();
+				fullCaptureBuffer = fastFullCaptureBuf_.createMat(1, imageArea, CV_16SC2);
+				if (static_cast<std::size_t>(imageArea) > fastFullCaptureHostCapacity_)
+				{
+					fastFullCaptureHost_.create(1, imageArea, CV_16SC2);
+					fastFullCaptureHostCapacity_ = static_cast<std::size_t>(imageArea);
+				}
+			}
 
 			const int bufferSize = radiusSuppressionBufferSize(image.size(), maxpoints);
 			GpuMat d_buffer = suppBuf_.createMat(bufferSize, 1, CV_32S);
 
 			calcKeypoints(image, mask, tmppoints, maxpoints,
-				fastThreshold_, d_buffer, h_buffer_, cuStream, diagnosticSensorId_.c_str(), diagnosticTimestamp_,
-				diagnosticSlotIndex_, s);
+				fastThreshold_, d_buffer, h_buffer_, cuStream, deterministic_, fullCaptureBuffer,
+				fastFullCaptureHost_, diagnosticSensorId_.c_str(), diagnosticTimestamp_, diagnosticSlotIndex_, s);
 			if (logStageFingerprint)
 				logFeatureStageFingerprint(
 					diagnosticSensorId_, diagnosticTimestamp_, diagnosticSlotIndex_,
@@ -745,10 +757,12 @@ private:
     GpuMat image_, mask_, keypoints_, descriptors_;
     std::vector<GpuMat> imagePyr_, maskPyr_, kptsPyr_, blurPyr_, descPyr_;
 
-    DeviceBuffer fastBuf_, suppBuf_;
+	DeviceBuffer fastBuf_, fastFullCaptureBuf_, suppBuf_;
     std::vector<DeviceBuffer> kptsBuf_;
 
     HostMem h_buffer_;
+	HostMem fastFullCaptureHost_;
+	std::size_t fastFullCaptureHostCapacity_ = 0U;
     int* h_count_;
 
     std::vector<float> scales_;

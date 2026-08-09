@@ -125,8 +125,11 @@ public:
 	 * radius-based non-maximum suppression (which otherwise uses atomicAdd-based
 	 * output packing and scrambles order) and uses a stable sort inside
 	 * `limitPoints`, so that tied Harris responses are broken by a canonical
-	 * (y, x) ordering. This removes the cross-run non-determinism in which
-	 * subset of keypoints survive truncation to `nfeatures`.
+	 * (y, x) ordering. When raw FAST candidates exceed the existing
+	 * `cvRound(0.1 * image.area())` cap, it also recaptures the complete set and
+	 * selects the cap by the fixed SplitMix64 `(y, x)` rank before responses and
+	 * suppression. This removes the cross-run non-determinism in which atomic
+	 * emission order chooses the capped candidate subset.
 	 *
 	 * Default is `false` to preserve legacy behavior and avoid the small sort
 	 * overhead when determinism is not required.

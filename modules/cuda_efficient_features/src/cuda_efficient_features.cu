@@ -21,6 +21,7 @@ limitations under the License.
 #include <cuda_runtime.h>
 #include <device_launch_parameters.h>
 #include <thrust/device_ptr.h>
+#include <thrust/functional.h>
 #include <thrust/scan.h>
 #include <thrust/sort.h>
 #include <thrust/execution_policy.h>
@@ -49,6 +50,66 @@ static __device__ inline int distanceSq(short2 pt1, short2 pt2)
 	const int dx = pt1.x - pt2.x;
 	const int dy = pt1.y - pt2.y;
 	return dx * dx + dy * dy;
+}
+
+static __device__ inline bool isLexicographicallyEarlier(short2 lhs, short2 rhs)
+{
+	if (lhs.y != rhs.y)
+		return lhs.y < rhs.y;
+	return lhs.x < rhs.x;
+}
+
+static __device__ inline bool shouldSuppressByResponseAndLocation(
+	short2 candidatePoint, float candidateResponse, short2 neighborPoint, float neighborResponse)
+{
+	if (neighborResponse > candidateResponse)
+		return true;
+	if (neighborResponse < candidateResponse)
+		return false;
+
+	// Equal response is common on low-texture areas. Use a canonical location
+	// tie-break instead of letting block-local point order decide the survivor.
+	return isLexicographicallyEarlier(neighborPoint, candidatePoint);
+}
+
+// Deterministic tie-breaker: sort points by (y, x) ascending.
+//
+// Needed because `radiusSuppressionKernel` below uses `atomicAdd` to pack
+// surviving points into the destination, and `calcKeypointsKernel` in
+// cuda_fast.cu uses `atomicInc` for FAST candidate packing. Both make the
+// output array ordering a function of GPU thread scheduling. Re-sorting by
+// location after suppression restores a deterministic, run-independent order
+// so the subsequent stable sort in `limitPoints` can break tied responses in
+// a canonical way.
+struct ShortPointLess
+{
+	__host__ __device__
+	bool operator()(const short2& a, const short2& b) const
+	{
+		if (a.y != b.y)
+			return a.y < b.y;
+		return a.x < b.x;
+	}
+};
+
+// Sort the LOCATION_ROW / RESPONSE_ROW of `points` by (y, x) ascending.
+// Only the first `points.cols` columns are reorganized. Other rows are
+// untouched because they are populated later in the pipeline
+// (angle/octave/size) and must not be relied upon here.
+static void sortPointsByLocation(GpuMat& points, cudaStream_t stream)
+{
+	const int npoints = points.cols;
+	if (npoints <= 1)
+		return;
+
+	auto locPtr = thrust::device_pointer_cast(points.ptr<short2>(LOCATION_ROW));
+	auto resPtr = thrust::device_pointer_cast(points.ptr<float>(RESPONSE_ROW));
+
+	thrust::sort_by_key(
+		thrust::cuda::par.on(stream),
+		locPtr, locPtr + npoints,
+		resPtr,
+		ShortPointLess());
 }
 
 static __device__ inline float convertToDegree(float angle)
@@ -87,7 +148,8 @@ static __device__ inline bool IsMaxPoint(int idx1, const short2* points, const f
 				const short2 pt2 = points[idx2];
 				const float response2 = responses[idx2];
 
-				if (response1 <= response2 && distanceSq(pt1, pt2) < imageRadius)
+				if (distanceSq(pt1, pt2) < imageRadius &&
+					shouldSuppressByResponseAndLocation(pt1, response1, pt2, response2))
 					return false;
 			}
 		}
@@ -233,6 +295,16 @@ __global__ void calcAnglesKernel(PtrStepb image, const short2* points, float* an
 	angles[i] = IC_Angle(image, points[i]);
 }
 
+__global__ void quantizeAnglesKernel(float* angles, int npoints, float quantizationDeg)
+{
+	const int i = blockIdx.x * blockDim.x + threadIdx.x;
+	if (i >= npoints)
+		return;
+
+	if (quantizationDeg > 0.f)
+		angles[i] = nearbyintf(angles[i] / quantizationDeg) * quantizationDeg;
+}
+
 __global__ void scalePointsKernel(short2* points, int* octaves, float* sizes, int npoints, float scale, int octave)
 {
 	const int i = blockIdx.x * blockDim.x + threadIdx.x;
@@ -279,7 +351,7 @@ int radiusSuppressionBufferSize(Size imgSize, int npoints)
 }
 
 void radiusSuppression(const GpuMat& src, GpuMat& dst, Size imgSize, float radius,
-	GpuMat& d_buffer, HostMem& h_buffer, cudaStream_t stream)
+	GpuMat& d_buffer, HostMem& h_buffer, cudaStream_t stream, bool deterministic)
 {
 	const int npoints = src.cols;
 	if (npoints <= 0)
@@ -339,9 +411,14 @@ void radiusSuppression(const GpuMat& src, GpuMat& dst, Size imgSize, float radiu
 	CUDA_CHECK(cudaStreamSynchronize(stream));
 
 	dst.cols = *h_count;
+
+	// Canonicalize output order to eliminate the non-determinism introduced
+	// by `atomicAdd(count, 1)` inside `radiusSuppressionKernel`.
+	if (deterministic)
+		sortPointsByLocation(dst, stream);
 }
 
-void limitPoints(GpuMat& points, int maxpoints, cudaStream_t stream)
+void limitPoints(GpuMat& points, int maxpoints, cudaStream_t stream, bool deterministic)
 {
 	const int npoints = points.cols;
 	if (npoints <= maxpoints)
@@ -350,7 +427,23 @@ void limitPoints(GpuMat& points, int maxpoints, cudaStream_t stream)
 	auto locations = thrust::device_pointer_cast(points.ptr<short2>(0));
 	auto responses = thrust::device_pointer_cast(points.ptr<float>(1));
 
-	thrust::sort_by_key(thrust::cuda::par.on(stream), responses, responses + npoints, locations, thrust::greater<float>());
+	if (deterministic)
+	{
+		// Stable sort preserves the canonical (y, x) input order among tied
+		// responses, so the subset of keypoints kept after truncation to
+		// `maxpoints` is reproducible across runs.
+		thrust::stable_sort_by_key(
+			thrust::cuda::par.on(stream),
+			responses, responses + npoints, locations,
+			thrust::greater<float>());
+	}
+	else
+	{
+		thrust::sort_by_key(
+			thrust::cuda::par.on(stream),
+			responses, responses + npoints, locations,
+			thrust::greater<float>());
+	}
 
 	points.cols = maxpoints;
 
@@ -373,7 +466,7 @@ void calcResponses(const GpuMat& image, GpuMat& points, cudaStream_t stream)
 	CUDA_CHECK(cudaGetLastError());
 }
 
-void calcAngles(const GpuMat& image, GpuMat& points, cudaStream_t stream)
+void calcAngles(const GpuMat& image, GpuMat& points, cudaStream_t stream, float quantizationDeg)
 {
 	const int npoints = points.cols;
 	if (npoints <= 0)
@@ -387,6 +480,12 @@ void calcAngles(const GpuMat& image, GpuMat& points, cudaStream_t stream)
 
 	calcAnglesKernel<<<grid, block, 0, stream>>>(image, locations, angles, npoints);
 	CUDA_CHECK(cudaGetLastError());
+
+	if (quantizationDeg > 0.f)
+	{
+		quantizeAnglesKernel<<<grid, block, 0, stream>>>(angles, npoints, quantizationDeg);
+		CUDA_CHECK(cudaGetLastError());
+	}
 }
 
 void scalePoints(GpuMat& points, float scale, int octave, cudaStream_t stream)

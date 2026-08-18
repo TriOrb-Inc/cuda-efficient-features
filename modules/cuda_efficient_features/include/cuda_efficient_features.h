@@ -17,6 +17,8 @@ limitations under the License.
 #ifndef __CUDA_EFFICIENT_FEATURES_H__
 #define __CUDA_EFFICIENT_FEATURES_H__
 
+#include <cstdint>
+
 #include <opencv2/core/cuda.hpp>
 #include <opencv2/features2d.hpp>
 
@@ -115,6 +117,34 @@ public:
 	virtual void setDescriptorType(DescriptorType descriptorType, const SphericalLensParams& params = SphericalLensParams()) = 0;
 	virtual DescriptorType getDescriptorType() const = 0;
 	virtual SphericalLensParams getSphericalLensParams() const = 0;
+
+	/**
+	 * @brief Enable deterministic keypoint ordering across runs.
+	 *
+	 * When enabled, the extractor canonicalizes keypoint array ordering after
+	 * radius-based non-maximum suppression (which otherwise uses atomicAdd-based
+	 * output packing and scrambles order) and uses a stable sort inside
+	 * `limitPoints`, so that tied Harris responses are broken by a canonical
+	 * (y, x) ordering. When raw FAST candidates exceed the existing
+	 * `cvRound(0.1 * image.area())` cap, it also recaptures the complete set and
+	 * selects the cap by the fixed SplitMix64 `(y, x)` rank before responses and
+	 * suppression. This removes the cross-run non-determinism in which atomic
+	 * emission order chooses the capped candidate subset.
+	 *
+	 * Default is `false` to preserve legacy behavior and avoid the small sort
+	 * overhead when determinism is not required.
+	 */
+	virtual void setDeterministic(bool /*deterministic*/) { }
+	virtual bool isDeterministic() const { return false; }
+
+	/**
+	 * @brief Set optional read-only trace context for the next extraction call.
+	 *
+	 * The default implementation is a no-op so existing callers are unaffected.
+	 * Downstream wrappers use this to attach sensor / timestamp labels to
+	 * diagnostic-only stage fingerprints without changing extraction results.
+	 */
+	virtual void setDiagnosticContext(const char* /*sensorId*/, std::uint64_t /*timestamp*/, int /*slotIndex*/) { }
 };
 
 } // namespace cuda

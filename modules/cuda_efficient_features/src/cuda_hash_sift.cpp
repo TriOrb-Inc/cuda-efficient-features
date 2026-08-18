@@ -22,6 +22,7 @@ limitations under the License.
 #include "cuda_efficient_descriptors.h"
 
 #include <algorithm>
+#include <cstdlib>
 
 #include <opencv2/cudaarithm.hpp>
 #include <opencv2/core/cuda_stream_accessor.hpp>
@@ -69,19 +70,53 @@ public:
 
 	MatmulAndSign()
 	{
-		CUBLAS_CHECK( cublasCreate_v2(&handle_) );
-		CUBLAS_CHECK( cublasSetPointerMode_v2(handle_, CUBLAS_POINTER_MODE_HOST) );
+		if (isDeterministicProjectionEnabled())
+		{
+			useDeterministicProjection_ = true;
+			return;
+		}
+
+		cublasStatus_t status = cublasCreate_v2(&handle_);
+		if (status != CUBLAS_STATUS_SUCCESS || handle_ == nullptr)
+		{
+			printf("[CUBLAS Error] HashSIFT cuBLAS init failed (code: %d); using deterministic projection fallback\n", status);
+			handle_ = nullptr;
+			useDeterministicProjection_ = true;
+			return;
+		}
+
+		if (!configureHandle())
+		{
+			CUBLAS_CHECK( cublasDestroy_v2(handle_) );
+			handle_ = nullptr;
+			useDeterministicProjection_ = true;
+		}
 	}
 
 	~MatmulAndSign()
 	{
-		CUBLAS_CHECK( cublasDestroy_v2(handle_) );
+		if (handle_ != nullptr)
+			CUBLAS_CHECK( cublasDestroy_v2(handle_) );
 	}
 
 	void operator()(const GpuMat& responses, const GpuMat& bMatrix, GpuMat& descriptors, Stream& stream)
 	{
 		CV_Assert(responses.rows == descriptors.rows);
-		CUBLAS_CHECK( cublasSetStream_v2(handle_, StreamAccessor::getStream(stream)) );
+		if (useDeterministicProjection_ || isDeterministicProjectionEnabled())
+		{
+			gpu::projectAndBinarizeHashSIFTDeterministic(
+				responses, bMatrix, descriptors, StreamAccessor::getStream(stream));
+			return;
+		}
+
+		cublasStatus_t status = cublasSetStream_v2(handle_, StreamAccessor::getStream(stream));
+		if (status != CUBLAS_STATUS_SUCCESS)
+		{
+			printf("[CUBLAS Error] HashSIFT cuBLAS stream bind failed (code: %d); using deterministic projection fallback\n", status);
+			gpu::projectAndBinarizeHashSIFTDeterministic(
+				responses, bMatrix, descriptors, StreamAccessor::getStream(stream));
+			return;
+		}
 
 		GpuMat tmp = bufTmp_.createMat(responses.rows, bMatrix.rows, responses.type());
 		hashSIFTGemm(responses, bMatrix, tmp, handle_);
@@ -90,8 +125,66 @@ public:
 
 private:
 
+	static bool isDeterministicHashSIFTEnabled()
+	{
+		const char* value = std::getenv("TRIORB_CUDA_HASH_SIFT_DETERMINISTIC");
+		if (value == nullptr || value[0] == '\0')
+			value = std::getenv("TRIORB_CUDA_FEATURES_DETERMINISTIC");
+		if (value == nullptr || value[0] == '\0')
+			return true;
+		if (value[0] == '0')
+			return false;
+		if ((value[0] == 'f' || value[0] == 'F') && (value[1] == 'a' || value[1] == 'A'))
+			return false;
+		if ((value[0] == 'n' || value[0] == 'N') && (value[1] == 'o' || value[1] == 'O'))
+			return false;
+		if ((value[0] == 'o' || value[0] == 'O') && (value[1] == 'f' || value[1] == 'F'))
+			return false;
+		return true;
+	}
+
+	static bool isDeterministicProjectionEnabled()
+	{
+		const char* value = std::getenv("TRIORB_CUDA_HASH_SIFT_DETERMINISTIC_PROJECT");
+		if (value == nullptr || value[0] == '\0')
+			return false;
+		if (value[0] == '0')
+			return false;
+		if ((value[0] == 'f' || value[0] == 'F') && (value[1] == 'a' || value[1] == 'A'))
+			return false;
+		if ((value[0] == 'n' || value[0] == 'N') && (value[1] == 'o' || value[1] == 'O'))
+			return false;
+		if ((value[0] == 'o' || value[0] == 'O') && (value[1] == 'f' || value[1] == 'F'))
+			return false;
+		return isDeterministicHashSIFTEnabled();
+	}
+
+	bool configureHandle()
+	{
+		cublasStatus_t status = cublasSetPointerMode_v2(handle_, CUBLAS_POINTER_MODE_HOST);
+		if (status != CUBLAS_STATUS_SUCCESS)
+		{
+			CUBLAS_CHECK(status);
+			return false;
+		}
+		status = cublasSetAtomicsMode(handle_, CUBLAS_ATOMICS_NOT_ALLOWED);
+		if (status != CUBLAS_STATUS_SUCCESS)
+		{
+			CUBLAS_CHECK(status);
+			return false;
+		}
+		status = cublasSetMathMode(handle_, CUBLAS_DEFAULT_MATH);
+		if (status != CUBLAS_STATUS_SUCCESS)
+		{
+			CUBLAS_CHECK(status);
+			return false;
+		}
+		return true;
+	}
+
 	DeviceBuffer bufTmp_;
-        cublasHandle_t handle_;
+	cublasHandle_t handle_{nullptr};
+	bool useDeterministicProjection_{false};
 };
 
 namespace

@@ -371,6 +371,123 @@ static __device__ void createHistogram(const uchar patch[PATCH_H][PATCH_W], Hist
 	}
 }
 
+// TRIORB 追加: 決定的かつ並列な histogram 構築。
+//
+// 従来の createHistogramSerial は 1 thread が 30x30 画素を逐次で回していた。
+// Orin NX 実機の ncu 実測では Avg Active Threads Per Warp = 1.71/32 (5.3%) で、
+// この kernel が GPU kernel 時間の 60.5% を占めていた。
+//
+// 重いのは画素ごとの expf / sqrtf / atan2f で、これらは画素間に依存が無い。
+// 一方 histogram への蓄積は加算順序が結果を変えるため、並列化には順序固定が要る。
+// そこで 2 phase に分ける:
+//
+//   phase 1: 全 thread が担当画素の mag / ori を計算し、shared へ専有書き込みする。
+//            累積が無いので競合せず、決定的である。
+//   phase 2: 単一 thread が **従来と完全に同じ順序** (y 昇順 -> x 昇順) で蓄積する。
+//            超越関数を含まないので軽い。
+//
+// 蓄積順序を従来と一致させているため、決定性の論証は自明であり、
+// 既存 serial 版との差は phase 1 の FMA contraction 文脈が変わりうる分だけになる。
+//
+// shared は行 chunk 方式で抑える。全 900 画素分を一度に持つと +7,200B となり
+// occupancy が 9 -> 4 block/SM へ落ちて深さの利得を相殺する。10 行ずつなら
+// +2,400B で済み、occupancy をほぼ維持したまま同じ深さ削減が得られる。
+static constexpr int GRAD_CHUNK_ROWS = 10;
+
+static __device__ void createHistogramDeterministicParallel(
+	const uchar patch[PATCH_H][PATCH_W], Histogram& hist, float kpScale,
+	float2 gradChunk[GRAD_CHUNK_ROWS][PATCH_W])
+{
+	const int h = PATCH_H;
+	const int w = PATCH_W;
+
+	const float kpRadius = kpScale * h * 0.5f;
+	const float kernelSigma = 0.5f * C_BINS * SIFT_DESCR_SCL_FCTR * kpRadius;
+	const float distScale = -1.f / (2 * kernelSigma * kernelSigma);
+	const float cx = 0.5f * w;
+	const float cy = 0.5f * h;
+
+	const int tid = threadIdx1D();
+	const int nthreads = blockSize1D();
+
+	for (int y0 = 1; y0 < h - 1; y0 += GRAD_CHUNK_ROWS)
+	{
+		const int yEnd = (y0 + GRAD_CHUNK_ROWS < h - 1) ? (y0 + GRAD_CHUNK_ROWS) : (h - 1);
+		const int rows = yEnd - y0;
+		const int cells = rows * (w - 2);
+
+		// phase 1: 画素ごとに独立。専有書き込みなので競合しない。
+		for (int idx = tid; idx < cells; idx += nthreads)
+		{
+			const int ly = idx / (w - 2);
+			const int x = 1 + (idx - ly * (w - 2));
+			const int y = y0 + ly;
+
+			const float magScale = expf(distScale * normsq(x - cx, y - cy));
+			const float dx = patch[y + 0][x + 1] - patch[y + 0][x - 1];
+			const float dy = patch[y - 1][x + 0] - patch[y + 1][x + 0];
+			gradChunk[ly][x].x = magScale * sqrtf(normsq(dx, dy));
+			gradChunk[ly][x].y = atan2f(dy, dx);
+		}
+		__syncthreads();
+
+		// phase 2: 従来と同じ y 昇順 -> x 昇順で蓄積する。単一 writer なので決定的。
+		if (tid == 0)
+		{
+			for (int ly = 0; ly < rows; ++ly)
+			{
+				const int y = y0 + ly;
+				for (int x = 1; x < w - 1; ++x)
+				{
+					const float mag = gradChunk[ly][x].x;
+					const float ori = gradChunk[ly][x].y;
+
+					int ri;
+					float rf;
+					separateIF(hist.bin.getRBin(y), &ri, &rf);
+
+					int ci;
+					float cf;
+					separateIF(hist.bin.getCBin(x), &ci, &cf);
+
+					int oi;
+					float of;
+					separateIF(hist.bin.scaleO * ori, &oi, &of);
+
+					if (oi < 0)
+						oi += ORI_BINS;
+					if (oi >= ORI_BINS)
+						oi -= ORI_BINS;
+
+					float v0, v1;
+					distribute(mag, rf, &v0, &v1);
+
+					float v00, v01, v10, v11;
+					distribute(v0, cf, &v00, &v01);
+					distribute(v1, cf, &v10, &v11);
+
+					float v000, v001, v010, v011, v100, v101, v110, v111;
+					distribute(v00, of, &v000, &v001);
+					distribute(v01, of, &v010, &v011);
+					distribute(v10, of, &v100, &v101);
+					distribute(v11, of, &v110, &v111);
+
+					hist.hist[ri + 1][ci + 1][oi + 0] += v000;
+					hist.hist[ri + 1][ci + 1][oi + 1] += v001;
+					hist.hist[ri + 1][ci + 2][oi + 0] += v010;
+					hist.hist[ri + 1][ci + 2][oi + 1] += v011;
+					hist.hist[ri + 2][ci + 1][oi + 0] += v100;
+					hist.hist[ri + 2][ci + 1][oi + 1] += v101;
+					hist.hist[ri + 2][ci + 2][oi + 0] += v110;
+					hist.hist[ri + 2][ci + 2][oi + 1] += v111;
+				}
+			}
+		}
+		// 次 chunk が gradChunk を上書きする前に phase 2 の読み出し完了を待つ。
+		__syncthreads();
+	}
+}
+
 static __device__ void createHistogramSerial(const uchar patch[PATCH_H][PATCH_W], Histogram& hist, float kpScale)
 {
 	const int h = PATCH_H;
@@ -551,6 +668,9 @@ __global__ void computePatchSIFTDeterministicKernel(const PtrStepSzb image,
 	__shared__ uchar patch[PATCH_H][PATCH_W];
 	__shared__ float histbuf[R_BINS + 2][C_BINS + 2][ORI_BINS + 2];
 	__shared__ float descriptors[DESCRIPTOR_SIZE + 1];
+	// TRIORB 追加: histogram の画素計算を全 thread で分担するための一時領域。
+	// 行 chunk 方式なので全 900 画素分 (+7,200B) ではなく +2,560B に収まる。
+	__shared__ float2 gradChunk[GRAD_CHUNK_ROWS][PATCH_W];
 
 	const int ix = blockIdx.x;
 	if (ix >= keypoints.rows)
@@ -559,13 +679,23 @@ __global__ void computePatchSIFTDeterministicKernel(const PtrStepSzb image,
 	rectifyPatch(image, keypoints[ix], patch, croppingScale, params);
 	__syncthreads();
 
+	// TRIORB 変更: ここで単一 thread へ絞ると 128 thread 中 127 が即 return し、
+	// lane 利用率が 5.3% に落ちていた (Orin NX ncu 実測)。histogram の画素計算は
+	// 画素間に依存が無いので全 thread で分担し、蓄積だけを従来と同じ順序で行う。
+	// この関数は内部に __syncthreads を持つため、全 thread が到達する必要がある。
+	Histogram hist(histbuf, HistBin(PATCH_H, PATCH_W, keypointScale));
+	if (threadIdx1D() == 0)
+	{
+		descriptors[0] = 1.f;
+		clearHistogramSerial(hist);
+	}
+	__syncthreads();
+
+	createHistogramDeterministicParallel(patch, hist, keypointScale, gradChunk);
+
 	if (threadIdx1D() != 0)
 		return;
 
-	descriptors[0] = 1.f;
-	Histogram hist(histbuf, HistBin(PATCH_H, PATCH_W, keypointScale));
-	clearHistogramSerial(hist);
-	createHistogramSerial(patch, hist, keypointScale);
 	describeFeatureVectorSerial(hist, &descriptors[1]);
 
 	for (int k = 0; k < DESCRIPTOR_SIZE + 1; ++k)

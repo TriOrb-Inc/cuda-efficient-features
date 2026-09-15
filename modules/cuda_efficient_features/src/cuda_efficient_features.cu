@@ -24,6 +24,12 @@ limitations under the License.
 #include <thrust/functional.h>
 #include <thrust/scan.h>
 #include <thrust/sort.h>
+#include <cub/device/device_scan.cuh>
+
+#include <chrono>
+#include <cstdlib>
+#include <map>
+#include <mutex>
 #include <thrust/execution_policy.h>
 
 #include "cuda_macro.h"
@@ -92,6 +98,97 @@ struct ShortPointLess
 	}
 };
 
+namespace {
+
+// thrust の temp buffer を再利用する allocator。
+//
+// **既定の `thrust::cuda::par` は呼び出しごとに cudaMalloc/cudaFree を出し、
+// これは device 同期を引き起こす。** pyramid level ごとに exclusive_scan と
+// sort_by_key が走るので camera あたり 16 回、4 camera で 64 回/frame になる。
+//
+// **アルゴリズム・比較関数・入力順序・出力は一切変えない。** 変わるのは
+// temp buffer の出所だけなので、結果は bit 単位で同一である。
+//
+// 実測 (2026-09-15、Orin NX #1、TGMO、n=4968、camera 1 台 1 frame p50):
+// radiusSuppression 10.480ms (抽出全体の 32%) と limitPoints 2.162ms (7%) が
+// thrust を使う段で、合わせて 38% を占める。
+//
+// pool は process 全体で共有し mutex で守る。camera ごとの submit thread は
+// frame ごとに作り直されるので thread_local では caching が効かない。
+// mutex の待ちは µs 級で、cudaMalloc の 50-100µs より桁で安い。
+class CachedDeviceAllocator
+{
+public:
+	using value_type = char;
+
+	char* allocate(std::ptrdiff_t bytes)
+	{
+		if (bytes <= 0)
+			return nullptr;
+		const std::size_t want = static_cast<std::size_t>(bytes);
+		{
+			std::lock_guard<std::mutex> lock(mutex_);
+			// 要求以上で最小の空き block を再利用する。
+			const auto it = free_.lower_bound(want);
+			if (it != free_.end())
+			{
+				char* const ptr = it->second;
+				busy_.emplace(ptr, it->first);
+				free_.erase(it);
+				return ptr;
+			}
+		}
+		void* raw = nullptr;
+		if (cudaMalloc(&raw, want) != cudaSuccess)
+			throw thrust::system::detail::bad_alloc("CachedDeviceAllocator: cudaMalloc failed");
+		char* const ptr = static_cast<char*>(raw);
+		{
+			std::lock_guard<std::mutex> lock(mutex_);
+			busy_.emplace(ptr, want);
+		}
+		return ptr;
+	}
+
+	void deallocate(char* ptr, std::size_t)
+	{
+		if (ptr == nullptr)
+			return;
+		std::lock_guard<std::mutex> lock(mutex_);
+		const auto it = busy_.find(ptr);
+		if (it == busy_.end())
+		{
+			// 想定外の pointer は pool へ戻さず解放する (安全側)。
+			cudaFree(ptr);
+			return;
+		}
+		free_.emplace(it->second, ptr);
+		busy_.erase(it);
+	}
+
+private:
+	std::mutex mutex_;
+	std::multimap<std::size_t, char*> free_;
+	std::map<char*, std::size_t> busy_;
+};
+
+// radiusSuppression の内訳計測。既定 OFF。
+bool suppressionBreakdownEnabled()
+{
+	static const bool enabled = []() {
+		const char* v = std::getenv("TRIORB_CUDA_FEATURE_STAGE_TIMING");
+		return v != nullptr && v[0] != '\0' && v[0] != '0';
+	}();
+	return enabled;
+}
+
+CachedDeviceAllocator& thrustPool()
+{
+	static CachedDeviceAllocator pool;
+	return pool;
+}
+
+}  // namespace
+
 // Sort the LOCATION_ROW / RESPONSE_ROW of `points` by (y, x) ascending.
 // Only the first `points.cols` columns are reorganized. Other rows are
 // untouched because they are populated later in the pipeline
@@ -105,11 +202,9 @@ static void sortPointsByLocation(GpuMat& points, cudaStream_t stream)
 	auto locPtr = thrust::device_pointer_cast(points.ptr<short2>(LOCATION_ROW));
 	auto resPtr = thrust::device_pointer_cast(points.ptr<float>(RESPONSE_ROW));
 
-	thrust::sort_by_key(
-		thrust::cuda::par.on(stream),
-		locPtr, locPtr + npoints,
-		resPtr,
-		ShortPointLess());
+		thrust::sort_by_key(
+			thrust::cuda::par(thrustPool()).on(stream),
+			locPtr, locPtr + npoints, resPtr, ShortPointLess());
 }
 
 static __device__ inline float convertToDegree(float angle)
@@ -334,11 +429,25 @@ __global__ void convertKeypointsKernel(const short2* srcLoc, const float* srcAng
 	dstKeypoints[i] = kpt;
 }
 
+// `thrust::exclusive_scan` は host を待たせる。段別計測 (2026-09-15、Orin NX #1、TGMO、
+// n=5044) では camera / frame あたり p50 3.486ms で、`radiusSuppression` 8.08ms の
+// **43.1%** を占めていた (cached allocator 適用後の値)。scan の対象は cell grid の
+// `nblocks + 1` 要素で L0 でも 1 万程度なので、GPU 計算としては µs 級である。
+//
+// CUB の `DeviceScan` は temp storage を呼び出し側が渡せば **完全に非同期**で、
+// **同じ値を同じ順序で計算する**。したがって結果は不変で、stream の drain だけが消える。
 static void exclusiveScan(const int* src, int* dst, int size, cudaStream_t stream = 0)
 {
-	auto ptrSrc = thrust::device_pointer_cast(src);
-	auto ptrDst = thrust::device_pointer_cast(dst);
-	thrust::exclusive_scan(thrust::cuda::par.on(stream), ptrSrc, ptrSrc + size, ptrDst);
+	std::size_t bytes = 0;
+	// 1 回目は必要 byte 数の問い合わせだけで、kernel は launch されない。
+	cub::DeviceScan::ExclusiveSum(
+		static_cast<void*>(nullptr), bytes, src, dst, size, stream);
+	char* temp = nullptr;
+	if (bytes > 0)
+		temp = thrustPool().allocate(static_cast<std::ptrdiff_t>(bytes));
+	CUDA_CHECK(cub::DeviceScan::ExclusiveSum(temp, bytes, src, dst, size, stream));
+	if (temp != nullptr)
+		thrustPool().deallocate(temp, bytes);
 }
 
 int radiusSuppressionBufferSize(Size imgSize, int npoints)
@@ -350,9 +459,35 @@ int radiusSuppressionBufferSize(Size imgSize, int npoints)
 	return 2 * ptrSize + npoints;
 }
 
+// radiusSuppression の内訳を持ち帰る累積器。**thread ごとに独立** (camera ごとに
+// 別 submit thread が呼ぶ)。段別計測が既定 OFF のときは加算されない。
+thread_local double g_suppMemset = 0.0, g_suppCount = 0.0, g_suppScan = 0.0,
+	g_suppMemcpy = 0.0, g_suppAssign = 0.0, g_suppKernel = 0.0, g_suppSync = 0.0;
+
+void resetRadiusSuppressionBreakdown()
+{
+	g_suppMemset = g_suppCount = g_suppScan = g_suppMemcpy = g_suppAssign
+		= g_suppKernel = g_suppSync = 0.0;
+}
+
+void getRadiusSuppressionBreakdown(double* out7)
+{
+	out7[0] = g_suppMemset; out7[1] = g_suppCount; out7[2] = g_suppScan;
+	out7[3] = g_suppMemcpy; out7[4] = g_suppAssign; out7[5] = g_suppKernel;
+	out7[6] = g_suppSync;
+}
+
 void radiusSuppression(const GpuMat& src, GpuMat& dst, Size imgSize, float radius,
 	GpuMat& d_buffer, HostMem& h_buffer, cudaStream_t stream, bool deterministic)
 {
+	const bool tim = suppressionBreakdownEnabled();
+	auto mark = std::chrono::steady_clock::now();
+	const auto lap = [&mark]() {
+		const auto now = std::chrono::steady_clock::now();
+		const double ms = std::chrono::duration<double, std::milli>(now - mark).count();
+		mark = now;
+		return ms;
+	};
 	const int npoints = src.cols;
 	if (npoints <= 0)
 	{
@@ -389,26 +524,33 @@ void radiusSuppression(const GpuMat& src, GpuMat& dst, Size imgSize, float radiu
 
 	// count number of points per block
 	CUDA_CHECK(cudaMemsetAsync(nptPerBlock, 0, sizeof(int) * ptrSize, stream));
+	if (tim) g_suppMemset += lap();
 	nptPerBlockKernel<<<cfg.grid, cfg.block, 0, stream>>>(srcPts, npoints, nptPerBlock, gridW);
 	CUDA_CHECK(cudaGetLastError());
+	if (tim) g_suppCount += lap();
 
 	// calculate start addresses corresponding to each blocks
 	exclusiveScan(nptPerBlock, blockPtr, ptrSize, stream);
+	if (tim) g_suppScan += lap();
 
 	// assign point indices to blocks
 	CUDA_CHECK(cudaMemcpyAsync(nptPerBlock, blockPtr, sizeof(int) * nblocks, cudaMemcpyDeviceToDevice, stream));
+	if (tim) g_suppMemcpy += lap();
 	assignIndexKernel<<<cfg.grid, cfg.block, 0, stream>>>(srcPts, npoints, pointIds, nptPerBlock, gridW);
 	CUDA_CHECK(cudaGetLastError());
+	if (tim) g_suppAssign += lap();
 
 	// radius suppression
 	radiusSuppressionKernel<<<cfg.grid, cfg.block, 0, stream>>>(srcPts, srcRes, npoints, dstPts, dstRes, d_count,
 		blockPtr, pointIds, gridW, gridH, imageRadius, blockRadius);
 	CUDA_CHECK(cudaGetLastError());
+	if (tim) g_suppKernel += lap();
 
 	// get number of remaining points 
 	CUDA_CHECK(cudaMemcpyAsync(h_count, d_count, sizeof(int), cudaMemcpyDeviceToHost, stream));
 
 	CUDA_CHECK(cudaStreamSynchronize(stream));
+	if (tim) g_suppSync += lap();
 
 	dst.cols = *h_count;
 
@@ -433,16 +575,15 @@ void limitPoints(GpuMat& points, int maxpoints, cudaStream_t stream, bool determ
 		// responses, so the subset of keypoints kept after truncation to
 		// `maxpoints` is reproducible across runs.
 		thrust::stable_sort_by_key(
-			thrust::cuda::par.on(stream),
-			responses, responses + npoints, locations,
-			thrust::greater<float>());
+			thrust::cuda::par(thrustPool()).on(stream),
+			responses, responses + npoints, locations, thrust::greater<float>());
 	}
 	else
 	{
+		// 評価・実機の既定 (deterministic=false) で実際に走る経路。
 		thrust::sort_by_key(
-			thrust::cuda::par.on(stream),
-			responses, responses + npoints, locations,
-			thrust::greater<float>());
+			thrust::cuda::par(thrustPool()).on(stream),
+			responses, responses + npoints, locations, thrust::greater<float>());
 	}
 
 	points.cols = maxpoints;

@@ -24,12 +24,9 @@ limitations under the License.
 #include <thrust/functional.h>
 #include <thrust/scan.h>
 #include <thrust/sort.h>
-#include <cub/device/device_scan.cuh>
 
 #include <chrono>
 #include <cstdlib>
-#include <map>
-#include <mutex>
 #include <thrust/execution_policy.h>
 
 #include "cuda_macro.h"
@@ -100,92 +97,6 @@ struct ShortPointLess
 
 namespace {
 
-// thrust の temp buffer を再利用する allocator。
-//
-// **既定の `thrust::cuda::par` は呼び出しごとに cudaMalloc/cudaFree を出し、
-// これは device 同期を引き起こす。** pyramid level ごとに exclusive_scan と
-// sort_by_key が走るので camera あたり 16 回、4 camera で 64 回/frame になる。
-//
-// **アルゴリズム・比較関数・入力順序・出力は一切変えない。** 変わるのは
-// temp buffer の出所だけなので、結果は bit 単位で同一である。
-//
-// 実測 (2026-09-15、Orin NX #1、TGMO、n=4968、camera 1 台 1 frame p50):
-// radiusSuppression 10.480ms (抽出全体の 32%) と limitPoints 2.162ms (7%) が
-// thrust を使う段で、合わせて 38% を占める。
-//
-// pool は process 全体で共有し mutex で守る。camera ごとの submit thread は
-// frame ごとに作り直されるので thread_local では caching が効かない。
-// mutex の待ちは µs 級で、cudaMalloc の 50-100µs より桁で安い。
-class CachedDeviceAllocator
-{
-public:
-	using value_type = char;
-
-	char* allocate(std::ptrdiff_t bytes)
-	{
-		if (bytes <= 0)
-			return nullptr;
-		const std::size_t want = static_cast<std::size_t>(bytes);
-		{
-			std::lock_guard<std::mutex> lock(mutex_);
-			// 要求以上で最小の空き block を再利用する。
-			const auto it = free_.lower_bound(want);
-			if (it != free_.end())
-			{
-				char* const ptr = it->second;
-				busy_.emplace(ptr, it->first);
-				free_.erase(it);
-				return ptr;
-			}
-		}
-		void* raw = nullptr;
-		if (cudaMalloc(&raw, want) != cudaSuccess)
-			throw thrust::system::detail::bad_alloc("CachedDeviceAllocator: cudaMalloc failed");
-		char* const ptr = static_cast<char*>(raw);
-		{
-			std::lock_guard<std::mutex> lock(mutex_);
-			busy_.emplace(ptr, want);
-		}
-		return ptr;
-	}
-
-	void deallocate(char* ptr, std::size_t)
-	{
-		if (ptr == nullptr)
-			return;
-		std::lock_guard<std::mutex> lock(mutex_);
-		const auto it = busy_.find(ptr);
-		if (it == busy_.end())
-		{
-			// 想定外の pointer は pool へ戻さず解放する (安全側)。
-			cudaFree(ptr);
-			return;
-		}
-		free_.emplace(it->second, ptr);
-		busy_.erase(it);
-	}
-
-private:
-	std::mutex mutex_;
-	std::multimap<std::size_t, char*> free_;
-	std::map<char*, std::size_t> busy_;
-};
-
-// radiusSuppression の内訳計測。既定 OFF。
-bool suppressionBreakdownEnabled()
-{
-	static const bool enabled = []() {
-		const char* v = std::getenv("TRIORB_CUDA_FEATURE_STAGE_TIMING");
-		return v != nullptr && v[0] != '\0' && v[0] != '0';
-	}();
-	return enabled;
-}
-
-CachedDeviceAllocator& thrustPool()
-{
-	static CachedDeviceAllocator pool;
-	return pool;
-}
 
 }  // namespace
 
@@ -203,7 +114,7 @@ static void sortPointsByLocation(GpuMat& points, cudaStream_t stream)
 	auto resPtr = thrust::device_pointer_cast(points.ptr<float>(RESPONSE_ROW));
 
 		thrust::sort_by_key(
-			thrust::cuda::par(thrustPool()).on(stream),
+			thrust::cuda::par.on(stream),
 			locPtr, locPtr + npoints, resPtr, ShortPointLess());
 }
 
@@ -429,25 +340,20 @@ __global__ void convertKeypointsKernel(const short2* srcLoc, const float* srcAng
 	dstKeypoints[i] = kpt;
 }
 
-// `thrust::exclusive_scan` は host を待たせる。段別計測 (2026-09-15、Orin NX #1、TGMO、
-// n=5044) では camera / frame あたり p50 3.486ms で、`radiusSuppression` 8.08ms の
-// **43.1%** を占めていた (cached allocator 適用後の値)。scan の対象は cell grid の
-// `nblocks + 1` 要素で L0 でも 1 万程度なので、GPU 計算としては µs 級である。
-//
-// CUB の `DeviceScan` は temp storage を呼び出し側が渡せば **完全に非同期**で、
-// **同じ値を同じ順序で計算する**。したがって結果は不変で、stream の drain だけが消える。
+// **pool を使わない。** `cudaFree` は暗黙同期するので、既定 allocator では
+// 「kernel 実行中の temp buffer が解放される」問題が隠れている。pool にすると
+// その同期が消え、**async な call の直後に buffer を free list へ戻すと別 stream へ
+// 再配布されて CUDA illegal memory access になる。**
+// 実測 2026-09-15 (Orin NX #1 / TGMO / keyframe 0.2m で dispatch 2001 件):
+// run 開始 5 分 12 秒後に `createGpuMatHeader` で illegal memory access が発生し、
+// **以降の全 frame (774 件) が失敗**した。段別では 6 倍速かったが frame 全体の
+// 利得は -0.18ms (雑音) しかなく、crash 級の代償に見合わないので撤去した。
+// 正しく直すなら deallocate 時に CUDA event を記録し、完了後にのみ再利用する。
 static void exclusiveScan(const int* src, int* dst, int size, cudaStream_t stream = 0)
 {
-	std::size_t bytes = 0;
-	// 1 回目は必要 byte 数の問い合わせだけで、kernel は launch されない。
-	cub::DeviceScan::ExclusiveSum(
-		static_cast<void*>(nullptr), bytes, src, dst, size, stream);
-	char* temp = nullptr;
-	if (bytes > 0)
-		temp = thrustPool().allocate(static_cast<std::ptrdiff_t>(bytes));
-	CUDA_CHECK(cub::DeviceScan::ExclusiveSum(temp, bytes, src, dst, size, stream));
-	if (temp != nullptr)
-		thrustPool().deallocate(temp, bytes);
+	auto ptrSrc = thrust::device_pointer_cast(src);
+	auto ptrDst = thrust::device_pointer_cast(dst);
+	thrust::exclusive_scan(thrust::cuda::par.on(stream), ptrSrc, ptrSrc + size, ptrDst);
 }
 
 int radiusSuppressionBufferSize(Size imgSize, int npoints)
@@ -457,6 +363,16 @@ int radiusSuppressionBufferSize(Size imgSize, int npoints)
 	const int nblocks = gridW * gridH;
 	const int ptrSize = nblocks + 1;
 	return 2 * ptrSize + npoints;
+}
+
+// radiusSuppression の内訳計測。既定 OFF。
+bool suppressionBreakdownEnabled()
+{
+	static const bool enabled = []() {
+		const char* v = std::getenv("TRIORB_CUDA_FEATURE_STAGE_TIMING");
+		return v != nullptr && v[0] != '\0' && v[0] != '0';
+	}();
+	return enabled;
 }
 
 // radiusSuppression の内訳を持ち帰る累積器。**thread ごとに独立** (camera ごとに
@@ -575,14 +491,14 @@ void limitPoints(GpuMat& points, int maxpoints, cudaStream_t stream, bool determ
 		// responses, so the subset of keypoints kept after truncation to
 		// `maxpoints` is reproducible across runs.
 		thrust::stable_sort_by_key(
-			thrust::cuda::par(thrustPool()).on(stream),
+			thrust::cuda::par.on(stream),
 			responses, responses + npoints, locations, thrust::greater<float>());
 	}
 	else
 	{
 		// 評価・実機の既定 (deterministic=false) で実際に走る経路。
 		thrust::sort_by_key(
-			thrust::cuda::par(thrustPool()).on(stream),
+			thrust::cuda::par.on(stream),
 			responses, responses + npoints, locations, thrust::greater<float>());
 	}
 

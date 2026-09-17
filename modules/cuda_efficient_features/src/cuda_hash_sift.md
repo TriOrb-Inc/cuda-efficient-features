@@ -35,7 +35,7 @@
 - project 固有の判断は wrapper や利用側へ寄せ、この file 自体の変更理由を追いやすくする。
 - 長大 file でも source 本体は read-only 前提で扱い、補足説明は sidecar 文書へ追加する。
 - Loop1 deterministic では patch SIFT histogram の生成を deterministic kernel へ切り替えられるようにした。
-  `TRIORB_CUDA_HASH_SIFT_DETERMINISTIC` が未指定または truthy の場合は、feature ごとに 1 thread が histogram
+  `TRIORB_CUDA_HASH_SIFT_DETERMINISTIC` (未指定時は `TRIORB_CUDA_FEATURES_DETERMINISTIC` に fallback) が truthy の場合は、feature ごとに 1 thread が histogram
   生成、正規化、clip を固定順で実行する。従来の並列 kernel は `atomicAdd` による加算順が run ごとに揺れ、
   同一 keypoint 座標でも response / descriptor payload が数 bit 分岐していた。
 - `MatmulAndSign` は cuBLAS handle に `CUBLAS_ATOMICS_NOT_ALLOWED` と `CUBLAS_DEFAULT_MATH` を設定する。

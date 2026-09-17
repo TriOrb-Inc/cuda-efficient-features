@@ -19,6 +19,7 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 */
+#include <chrono>
 #include <iostream>
 
 #include "cuda_efficient_features.h"
@@ -26,6 +27,7 @@ limitations under the License.
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
+#include <cstdio>
 #include <cstdlib>
 #include <iomanip>
 #include <limits>
@@ -132,6 +134,19 @@ static FeatureResponseStats computeResponseStats(std::vector<float> responses)
         stats.maxValue = responses.back();
         stats.meanValue = static_cast<float>(sum / static_cast<double>(responses.size()));
         return stats;
+}
+
+// 段別 host 時刻の計測。**既定 OFF、演算は一切変えない。**
+// pyramid level loop の内側には無条件の blocking sync が 2 本あるので
+// (calcKeypoints と radiusSuppression)、host 時刻はそこで GPU と同期しており
+// 段の所在を掴むのに足りる。CUDA event を使わないのは加算量を最小にするため。
+static bool shouldLogStageTiming()
+{
+	static const bool enabled = []() {
+		const char* v = std::getenv("TRIORB_CUDA_FEATURE_STAGE_TIMING");
+		return v != nullptr && v[0] != '\0' && v[0] != '0';
+	}();
+	return enabled;
 }
 
 static int featureStageFingerprintFrameLimit()
@@ -251,6 +266,10 @@ void calcKeypoints(const GpuMat& image, const GpuMat& mask, GpuMat& keypoints, i
 	GpuMat& fullCaptureBuffer, HostMem& fullCaptureHostBuffer, const char* sensorId, std::uint64_t timestamp,
 	int slotIndex, int level);
 int radiusSuppressionBufferSize(Size imgSize, int npoints);
+// radiusSuppression の内訳 (memset/count/scan/memcpy/assign/kernel/sync)。
+// 段別計測が OFF なら全て 0。
+void resetRadiusSuppressionBreakdown();
+void getRadiusSuppressionBreakdown(double* out7);
 void radiusSuppression(const GpuMat& src, GpuMat& dst, Size imgSize, float radius,
 	GpuMat& d_buffer, HostMem& h_buffer, cudaStream_t stream, bool deterministic);
 void limitPoints(GpuMat& points, int maxpoints, cudaStream_t stream, bool deterministic);
@@ -511,6 +530,17 @@ public:
         kptsPyr_.resize(nlevels_);
         kptsBuf_.resize(nlevels_);
 		const bool logStageFingerprint = shouldLogStageFingerprint();
+		const bool logStageTiming = shouldLogStageTiming();
+		double t_kp = 0.0, t_resp = 0.0, t_supp = 0.0, t_limit = 0.0, t_ang = 0.0;
+		if (logStageTiming) resetRadiusSuppressionBreakdown();
+		const auto t_loop1_begin = std::chrono::steady_clock::now();
+		auto stage_mark = t_loop1_begin;
+		const auto stage_elapsed_ms = [&stage_mark]() {
+			const auto now = std::chrono::steady_clock::now();
+			const double ms = std::chrono::duration<double, std::milli>(now - stage_mark).count();
+			stage_mark = now;
+			return ms;
+		};
         for (int s = firstLevel_; s < nlevels_; s++)
 		{
 			const GpuMat& image = imagePyr_[s];
@@ -540,12 +570,14 @@ public:
 			calcKeypoints(image, mask, tmppoints, maxpoints,
 				fastThreshold_, d_buffer, h_buffer_, cuStream, deterministic_, fullCaptureBuffer,
 				fastFullCaptureHost_, diagnosticSensorId_.c_str(), diagnosticTimestamp_, diagnosticSlotIndex_, s);
+			if (logStageTiming) t_kp += stage_elapsed_ms();
 			if (logStageFingerprint)
 				logFeatureStageFingerprint(
 					diagnosticSensorId_, diagnosticTimestamp_, diagnosticSlotIndex_,
 					s, "calcKeypoints", tmppoints, false, stream);
 
 			calcResponses(image, tmppoints, cuStream);
+			if (logStageTiming) t_resp += stage_elapsed_ms();
 			if (logStageFingerprint)
 				logFeatureStageFingerprint(
 					diagnosticSensorId_, diagnosticTimestamp_, diagnosticSlotIndex_,
@@ -553,12 +585,14 @@ public:
 
 			radiusSuppression(tmppoints, keypoints, image.size(), nonmaxRadius_,
 				d_buffer, h_buffer_, cuStream, deterministic_);
+			if (logStageTiming) t_supp += stage_elapsed_ms();
 			if (logStageFingerprint)
 				logFeatureStageFingerprint(
 					diagnosticSensorId_, diagnosticTimestamp_, diagnosticSlotIndex_,
 					s, "radiusSuppression", keypoints, true, stream);
 
 			limitPoints(keypoints, nfeaturesPerLevel_[s], cuStream, deterministic_);
+			if (logStageTiming) t_limit += stage_elapsed_ms();
 			if (logStageFingerprint)
 				logFeatureStageFingerprint(
 					diagnosticSensorId_, diagnosticTimestamp_, diagnosticSlotIndex_,
@@ -566,10 +600,14 @@ public:
 
 			calcAngles(image, keypoints, cuStream,
 				deterministic_ ? deterministicAngleQuantizationDeg() : 0.f);
+			if (logStageTiming) t_ang += stage_elapsed_ms();
 
 			kptsPyr_[s] = keypoints;
 			nkeypoints += keypoints.cols;
 		}
+		const double t_loop1 = std::chrono::duration<double, std::milli>(
+			std::chrono::steady_clock::now() - t_loop1_begin).count();
+		const auto t_loop2_begin = std::chrono::steady_clock::now();
 
 		if (nkeypoints == 0)
 		{
@@ -609,6 +647,21 @@ public:
 			keypoints.copyTo(keypoints_.colRange(dstRange), stream);
 
 			offset += npoints;
+		}
+		if (logStageTiming)
+		{
+			const double t_loop2 = std::chrono::duration<double, std::milli>(
+				std::chrono::steady_clock::now() - t_loop2_begin).count();
+			double sb[7] = {0, 0, 0, 0, 0, 0, 0};
+			getRadiusSuppressionBreakdown(sb);
+			printf("[cuda_feature_stage_timing] sensor=%s ts=%llu slot=%d levels=%d nkp=%d "
+				"loop1_ms=%.3f kp=%.3f resp=%.3f supp=%.3f limit=%.3f ang=%.3f loop2_ms=%.3f "
+				"sMemset=%.3f sCount=%.3f sScan=%.3f sMemcpy=%.3f sAssign=%.3f sKernel=%.3f sSync=%.3f\n",
+				diagnosticSensorId_.c_str(), static_cast<unsigned long long>(diagnosticTimestamp_),
+				diagnosticSlotIndex_, nlevels_ - firstLevel_, nkeypoints,
+				t_loop1, t_kp, t_resp, t_supp, t_limit, t_ang, t_loop2,
+				sb[0], sb[1], sb[2], sb[3], sb[4], sb[5], sb[6]);
+			fflush(stdout);
 		}
 
 		if (_keypoints.kind() == _InputArray::KindFlag::MAT)

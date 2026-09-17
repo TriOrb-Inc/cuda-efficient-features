@@ -24,6 +24,9 @@ limitations under the License.
 #include <thrust/functional.h>
 #include <thrust/scan.h>
 #include <thrust/sort.h>
+
+#include <chrono>
+#include <cstdlib>
 #include <thrust/execution_policy.h>
 
 #include "cuda_macro.h"
@@ -92,6 +95,11 @@ struct ShortPointLess
 	}
 };
 
+namespace {
+
+
+}  // namespace
+
 // Sort the LOCATION_ROW / RESPONSE_ROW of `points` by (y, x) ascending.
 // Only the first `points.cols` columns are reorganized. Other rows are
 // untouched because they are populated later in the pipeline
@@ -105,11 +113,9 @@ static void sortPointsByLocation(GpuMat& points, cudaStream_t stream)
 	auto locPtr = thrust::device_pointer_cast(points.ptr<short2>(LOCATION_ROW));
 	auto resPtr = thrust::device_pointer_cast(points.ptr<float>(RESPONSE_ROW));
 
-	thrust::sort_by_key(
-		thrust::cuda::par.on(stream),
-		locPtr, locPtr + npoints,
-		resPtr,
-		ShortPointLess());
+		thrust::sort_by_key(
+			thrust::cuda::par.on(stream),
+			locPtr, locPtr + npoints, resPtr, ShortPointLess());
 }
 
 static __device__ inline float convertToDegree(float angle)
@@ -334,6 +340,15 @@ __global__ void convertKeypointsKernel(const short2* srcLoc, const float* srcAng
 	dstKeypoints[i] = kpt;
 }
 
+// **pool を使わない。** `cudaFree` は暗黙同期するので、既定 allocator では
+// 「kernel 実行中の temp buffer が解放される」問題が隠れている。pool にすると
+// その同期が消え、**async な call の直後に buffer を free list へ戻すと別 stream へ
+// 再配布されて CUDA illegal memory access になる。**
+// 実測 2026-09-15 (Orin NX #1 / TGMO / keyframe 0.2m で dispatch 2001 件):
+// run 開始 5 分 12 秒後に `createGpuMatHeader` で illegal memory access が発生し、
+// **以降の全 frame (774 件) が失敗**した。段別では 6 倍速かったが frame 全体の
+// 利得は -0.18ms (雑音) しかなく、crash 級の代償に見合わないので撤去した。
+// 正しく直すなら deallocate 時に CUDA event を記録し、完了後にのみ再利用する。
 static void exclusiveScan(const int* src, int* dst, int size, cudaStream_t stream = 0)
 {
 	auto ptrSrc = thrust::device_pointer_cast(src);
@@ -350,9 +365,45 @@ int radiusSuppressionBufferSize(Size imgSize, int npoints)
 	return 2 * ptrSize + npoints;
 }
 
+// radiusSuppression の内訳計測。既定 OFF。
+bool suppressionBreakdownEnabled()
+{
+	static const bool enabled = []() {
+		const char* v = std::getenv("TRIORB_CUDA_FEATURE_STAGE_TIMING");
+		return v != nullptr && v[0] != '\0' && v[0] != '0';
+	}();
+	return enabled;
+}
+
+// radiusSuppression の内訳を持ち帰る累積器。**thread ごとに独立** (camera ごとに
+// 別 submit thread が呼ぶ)。段別計測が既定 OFF のときは加算されない。
+thread_local double g_suppMemset = 0.0, g_suppCount = 0.0, g_suppScan = 0.0,
+	g_suppMemcpy = 0.0, g_suppAssign = 0.0, g_suppKernel = 0.0, g_suppSync = 0.0;
+
+void resetRadiusSuppressionBreakdown()
+{
+	g_suppMemset = g_suppCount = g_suppScan = g_suppMemcpy = g_suppAssign
+		= g_suppKernel = g_suppSync = 0.0;
+}
+
+void getRadiusSuppressionBreakdown(double* out7)
+{
+	out7[0] = g_suppMemset; out7[1] = g_suppCount; out7[2] = g_suppScan;
+	out7[3] = g_suppMemcpy; out7[4] = g_suppAssign; out7[5] = g_suppKernel;
+	out7[6] = g_suppSync;
+}
+
 void radiusSuppression(const GpuMat& src, GpuMat& dst, Size imgSize, float radius,
 	GpuMat& d_buffer, HostMem& h_buffer, cudaStream_t stream, bool deterministic)
 {
+	const bool tim = suppressionBreakdownEnabled();
+	auto mark = std::chrono::steady_clock::now();
+	const auto lap = [&mark]() {
+		const auto now = std::chrono::steady_clock::now();
+		const double ms = std::chrono::duration<double, std::milli>(now - mark).count();
+		mark = now;
+		return ms;
+	};
 	const int npoints = src.cols;
 	if (npoints <= 0)
 	{
@@ -389,26 +440,33 @@ void radiusSuppression(const GpuMat& src, GpuMat& dst, Size imgSize, float radiu
 
 	// count number of points per block
 	CUDA_CHECK(cudaMemsetAsync(nptPerBlock, 0, sizeof(int) * ptrSize, stream));
+	if (tim) g_suppMemset += lap();
 	nptPerBlockKernel<<<cfg.grid, cfg.block, 0, stream>>>(srcPts, npoints, nptPerBlock, gridW);
 	CUDA_CHECK(cudaGetLastError());
+	if (tim) g_suppCount += lap();
 
 	// calculate start addresses corresponding to each blocks
 	exclusiveScan(nptPerBlock, blockPtr, ptrSize, stream);
+	if (tim) g_suppScan += lap();
 
 	// assign point indices to blocks
 	CUDA_CHECK(cudaMemcpyAsync(nptPerBlock, blockPtr, sizeof(int) * nblocks, cudaMemcpyDeviceToDevice, stream));
+	if (tim) g_suppMemcpy += lap();
 	assignIndexKernel<<<cfg.grid, cfg.block, 0, stream>>>(srcPts, npoints, pointIds, nptPerBlock, gridW);
 	CUDA_CHECK(cudaGetLastError());
+	if (tim) g_suppAssign += lap();
 
 	// radius suppression
 	radiusSuppressionKernel<<<cfg.grid, cfg.block, 0, stream>>>(srcPts, srcRes, npoints, dstPts, dstRes, d_count,
 		blockPtr, pointIds, gridW, gridH, imageRadius, blockRadius);
 	CUDA_CHECK(cudaGetLastError());
+	if (tim) g_suppKernel += lap();
 
 	// get number of remaining points 
 	CUDA_CHECK(cudaMemcpyAsync(h_count, d_count, sizeof(int), cudaMemcpyDeviceToHost, stream));
 
 	CUDA_CHECK(cudaStreamSynchronize(stream));
+	if (tim) g_suppSync += lap();
 
 	dst.cols = *h_count;
 
@@ -434,15 +492,14 @@ void limitPoints(GpuMat& points, int maxpoints, cudaStream_t stream, bool determ
 		// `maxpoints` is reproducible across runs.
 		thrust::stable_sort_by_key(
 			thrust::cuda::par.on(stream),
-			responses, responses + npoints, locations,
-			thrust::greater<float>());
+			responses, responses + npoints, locations, thrust::greater<float>());
 	}
 	else
 	{
+		// 評価・実機の既定 (deterministic=false) で実際に走る経路。
 		thrust::sort_by_key(
 			thrust::cuda::par.on(stream),
-			responses, responses + npoints, locations,
-			thrust::greater<float>());
+			responses, responses + npoints, locations, thrust::greater<float>());
 	}
 
 	points.cols = maxpoints;

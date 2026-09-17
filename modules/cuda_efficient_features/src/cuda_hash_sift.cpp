@@ -127,11 +127,15 @@ private:
 
 	static bool isDeterministicHashSIFTEnabled()
 	{
+		// **未設定の既定は false である。** EfficientFeaturesImpl の deterministic_ も
+		// 既定 false で、同じ env が未設定のときに片方 ON / 片方 OFF になっていたのを揃えた。
+		// 2026-09-15 TGMO / Orin NX #1: ON は feature_ms +19.0ms/frame・公開 pose -11% で
+		// 公開 ATE は改善せず、ON の 2 run 同士も一致しない (再現性を達成していない)。
 		const char* value = std::getenv("TRIORB_CUDA_HASH_SIFT_DETERMINISTIC");
 		if (value == nullptr || value[0] == '\0')
 			value = std::getenv("TRIORB_CUDA_FEATURES_DETERMINISTIC");
 		if (value == nullptr || value[0] == '\0')
-			return true;
+			return false;
 		if (value[0] == '0')
 			return false;
 		if ((value[0] == 'f' || value[0] == 'F') && (value[1] == 'a' || value[1] == 'A'))
